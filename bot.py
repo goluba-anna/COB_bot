@@ -138,23 +138,37 @@ async def back_to_start(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 # Запуск бота (webhook)
-async def main():
-    await bot.delete_webhook(drop_pending_updates=True)
-    await bot.set_webhook(url=f"{os.getenv('WEBHOOK_URL')}/webhook")
-    logger.info("Webhook установлен")
+async def on_startup(bot: Bot):
+    webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
+    await bot.set_webhook(
+        url=webhook_url,
+        secret_token=os.getenv("WEBHOOK_SECRET", "secret")
+    )
+    logger.info(f"Webhook set to {webhook_url}")
 
-if __name__ == "__main__":
-    import uvicorn
-    from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
-    from aiohttp import web
+async def on_shutdown(bot: Bot):
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook deleted")
+
+async def main():
+    dp.startup.register(on_startup)
+    dp.shutdown.register(on_shutdown)
 
     app = web.Application()
-    webhook_handler = SimpleRequestHandler(
+    SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=os.getenv("WEBHOOK_SECRET", "secret")
-    )
-    webhook_handler.register(app, path="/webhook")
+    ).register(app, path="/webhook")
     setup_application(app, dp, bot=bot)
 
-    uvicorn.run(app, host="0.0.0.0", port=int(os.getenv("PORT", 8080)))
+    runner = web.AppRunner(app)
+    await runner.setup()
+    site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
+    await site.start()
+
+    logger.info("Server started")
+    await asyncio.Event().wait()  # держим сервер живым
+
+if __name__ == "__main__":
+    asyncio.run(main())
