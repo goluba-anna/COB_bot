@@ -9,7 +9,9 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 import os
 
-from aiohttp import web   # ← добавь эту строку
+# Импорты для webhook на aiohttp
+from aiohttp import web
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 load_dotenv()
 
@@ -63,7 +65,7 @@ async def start_diagnostics_callback(callback: types.CallbackQuery, state: FSMCo
 
 • Ты соглашаешься с публичной офертой  
 • Даёшь согласие на обработку персональных данных  
-• Разрешаешь присылать тебе полезные материалы и уведомления (можно отписаться в любой момент)
+• Разрешаешь присылать тебе полезные материалы и напоминания (можно отписаться в любой момент)
 
 Это стандартные правила, чтобы всё было честно и безопасно.
 
@@ -104,17 +106,16 @@ async def about_method_callback(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-# Подтверждение согласия → начало диагностики
+# Подтверждение согласия → начало диагностики (пока заглушка)
 @dp.callback_query(lambda c: c.data == "confirm_consent")
 async def confirm_consent(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Отлично! Начинаем диагностику ❤️\n\nСейчас первый вопрос...")
     # Здесь будет переход к первому вопросу опроса
-    # Пока просто заглушка
     await callback.message.answer("Вопрос 1 из 20: ... (тут будет твой вопрос)")
     await state.set_state(Form.diagnostics)
     await callback.answer()
 
-# Показ документов
+# Показ документов с твоими реальными ссылками
 @dp.callback_query(lambda c: c.data == "show_legal")
 async def show_legal(callback: types.CallbackQuery):
     text = """📄 Условия и документы
@@ -132,45 +133,55 @@ async def show_legal(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
 
-# Возврат в начало (если нужно)
+# Возврат в начало
 @dp.callback_query(lambda c: c.data == "back_to_start")
 async def back_to_start(callback: types.CallbackQuery, state: FSMContext):
     await state.clear()
     await start_handler(callback.message, state)
     await callback.answer()
 
-# Запуск бота (webhook)
+# Запуск бота через aiohttp
 async def on_startup(bot: Bot):
     webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
+    secret = os.getenv("WEBHOOK_SECRET", "secret")
     await bot.set_webhook(
         url=webhook_url,
-        secret_token=os.getenv("WEBHOOK_SECRET", "secret")
+        secret_token=secret
     )
-    logger.info(f"Webhook set to {webhook_url}")
+    logger.info(f"Webhook установлен: {webhook_url}")
 
 async def on_shutdown(bot: Bot):
     await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Webhook deleted")
+    logger.info("Webhook удалён")
 
 async def main():
+    # Регистрируем хуки запуска/остановки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
+    # Создаём aiohttp-приложение
     app = web.Application()
-    SimpleRequestHandler(
+
+    # Регистрируем обработчик webhook
+    webhook_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
         secret_token=os.getenv("WEBHOOK_SECRET", "secret")
-    ).register(app, path="/webhook")
+    )
+    webhook_handler.register(app, path="/webhook")
+
+    # Настраиваем приложение
     setup_application(app, dp, bot=bot)
 
+    # Запускаем сервер
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
 
-    logger.info("Server started")
-    await asyncio.Event().wait()  # держим сервер живым
+    logger.info("Сервер запущен и ожидает обновлений")
+    # Держим сервер живым
+    await asyncio.Event().wait()
 
 if __name__ == "__main__":
     asyncio.run(main())
