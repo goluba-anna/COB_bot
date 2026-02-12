@@ -9,6 +9,8 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 import os
 
+from aiohttp import web   # ← добавь эту строку
+
 load_dotenv()
 
 # Настраиваем логирование
