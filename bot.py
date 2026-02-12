@@ -9,27 +9,27 @@ from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 import os
 
-# Импорты для webhook на aiohttp
+# Импорты для aiohttp webhook (это критично!)
 from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 load_dotenv()
 
-# Настраиваем логирование
+# Логирование
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Инициализация бота и диспетчера
+# Бот и диспетчер
 bot = Bot(token=os.getenv("BOT_TOKEN"))
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# Состояния FSM
+# Состояния
 class Form(StatesGroup):
-    consent = State()          # ожидание согласия на условия
-    diagnostics = State()      # прохождение диагностики (вопросы)
+    consent = State()
+    diagnostics = State()
 
-# Приветственное сообщение с тремя кнопками
+# /start
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     username = message.from_user.first_name or "друг"
@@ -57,11 +57,10 @@ async def start_handler(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
     await state.set_state(Form.consent)
 
-# Обработка кнопки "Начать диагностику"
+# Начать диагностику
 @dp.callback_query(lambda c: c.data == "start_diagnostics")
 async def start_diagnostics_callback(callback: types.CallbackQuery, state: FSMContext):
-    await callback.message.edit_text(
-        """Прежде чем мы начнём диагностику, нужно подтвердить согласие с условиями:
+    text = """Прежде чем мы начнём диагностику, нужно подтвердить согласие с условиями:
 
 • Ты соглашаешься с публичной офертой  
 • Даёшь согласие на обработку персональных данных  
@@ -71,15 +70,17 @@ async def start_diagnostics_callback(callback: types.CallbackQuery, state: FSMCo
 
 Если хочешь почитать документы подробнее — нажми кнопку ниже.
 
-Готов(а) продолжить? 😊""",
-        reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="Согласен(а) и готов(а) начать", callback_data="confirm_consent")],
-            [InlineKeyboardButton(text="Условия и документы", callback_data="show_legal")]
-        ])
-    )
+Готов(а) продолжить? 😊"""
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="Согласен(а) и готов(а) начать", callback_data="confirm_consent")],
+        [InlineKeyboardButton(text="Условия и документы", callback_data="show_legal")]
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
-# Обработка кнопки "О методе СОВ"
+# О методе СОВ
 @dp.callback_query(lambda c: c.data == "about_method")
 async def about_method_callback(callback: types.CallbackQuery):
     text = """📚 О методе СОВ — Системы Осознанного Выбора
@@ -106,16 +107,15 @@ async def about_method_callback(callback: types.CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-# Подтверждение согласия → начало диагностики (пока заглушка)
+# Подтверждение согласия
 @dp.callback_query(lambda c: c.data == "confirm_consent")
 async def confirm_consent(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Отлично! Начинаем диагностику ❤️\n\nСейчас первый вопрос...")
-    # Здесь будет переход к первому вопросу опроса
-    await callback.message.answer("Вопрос 1 из 20: ... (тут будет твой вопрос)")
+    await callback.message.answer("Вопрос 1 из 20: ... (пока заглушка)")
     await state.set_state(Form.diagnostics)
     await callback.answer()
 
-# Показ документов с твоими реальными ссылками
+# Условия и документы
 @dp.callback_query(lambda c: c.data == "show_legal")
 async def show_legal(callback: types.CallbackQuery):
     text = """📄 Условия и документы
@@ -140,29 +140,32 @@ async def back_to_start(callback: types.CallbackQuery, state: FSMContext):
     await start_handler(callback.message, state)
     await callback.answer()
 
-# Запуск бота через aiohttp
+# Запуск
 async def on_startup(bot: Bot):
-    webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
-    secret = os.getenv("WEBHOOK_SECRET", "secret")
-    await bot.set_webhook(
-        url=webhook_url,
-        secret_token=secret
-    )
-    logger.info(f"Webhook установлен: {webhook_url}")
+    try:
+        webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
+        secret = os.getenv("WEBHOOK_SECRET", "secret")
+        if not webhook_url or not secret:
+            logger.error("Отсутствует WEBHOOK_URL или WEBHOOK_SECRET!")
+            return
+        await bot.set_webhook(url=webhook_url, secret_token=secret)
+        logger.info(f"Webhook установлен: {webhook_url}")
+    except Exception as e:
+        logger.error(f"Ошибка установки webhook: {e}")
 
 async def on_shutdown(bot: Bot):
-    await bot.delete_webhook(drop_pending_updates=True)
-    logger.info("Webhook удалён")
+    try:
+        await bot.delete_webhook(drop_pending_updates=True)
+        logger.info("Webhook удалён")
+    except Exception as e:
+        logger.error(f"Ошибка удаления webhook: {e}")
 
 async def main():
-    # Регистрируем хуки запуска/остановки
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
 
-    # Создаём aiohttp-приложение
     app = web.Application()
 
-    # Регистрируем обработчик webhook
     webhook_handler = SimpleRequestHandler(
         dispatcher=dp,
         bot=bot,
@@ -170,18 +173,19 @@ async def main():
     )
     webhook_handler.register(app, path="/webhook")
 
-    # Настраиваем приложение
     setup_application(app, dp, bot=bot)
 
-    # Запускаем сервер
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
 
     logger.info("Сервер запущен и ожидает обновлений")
-    # Держим сервер живым
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    asyncio.run(main())
+    try:
+        asyncio.run(main())
+    except Exception as e:
+        logger.error(f"Критическая ошибка: {e}")
+        raise
