@@ -8,6 +8,7 @@ from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
 import os
+
 from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -48,7 +49,7 @@ PROGRAMS = [
     "Никто не нужен"
 ]
 
-# Вопросы первого этапа — по одному на программу
+# Вопросы первого этапа — по одному на каждую программу
 FIRST_STAGE_QUESTIONS = [
     "Я постоянно боюсь, что близкий человек охладеет или уйдёт, и цепляюсь за него, чтобы этого не случилось.",
     "Я всегда сканирую слова и действия людей, ожидая, что они меня обманут или предадут.",
@@ -70,7 +71,7 @@ FIRST_STAGE_QUESTIONS = [
     "Даже среди людей я чувствую себя чужим, как будто стою за стеклом и не могу присоединиться."
 ]
 
-# Дополнительные углубляющие вопросы для топ-8 (по одному на программу из топ-8)
+# Углубляющие вопросы для топ-8 (по одному на программу)
 SECOND_STAGE_QUESTIONS = [
     "В отношениях я угождаю и контролирую, чтобы человек не ушёл, но это меня истощает эмоционально.",
     "Я редко расслабляюсь в отношениях, потому что подсознательно жду предательства или обмана.",
@@ -200,7 +201,7 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
     await ask_question(callback.message, state)
     await callback.answer()
 
-# Общая функция вопроса
+# Общая функция вопроса (для обоих этапов)
 async def ask_question(message: Message, state: FSMContext):
     data = await state.get_data()
     stage = data.get("stage", "first")
@@ -218,18 +219,18 @@ async def ask_question(message: Message, state: FSMContext):
             await finish_diagnostics(message, state)
             return
         prog_name = top8[index][0]
-        q_text = SECOND_STAGE_QUESTIONS[index]  # или персонализированный вопрос
+        q_text = SECOND_STAGE_QUESTIONS[index]  # углубляющий вопрос для этой программы
         callback_prefix = "second"
 
     text = f"Вопрос {index + 1} из {len(FIRST_STAGE_QUESTIONS) + 8}:\n\n{q_text}"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="1 — Абсолютно не про меня", callback_data=f"{callback_prefix}_1_{index}")],
-        [InlineKeyboardButton(text="2", callback_data=f"{callback_prefix}_2_{index}")],
-        [InlineKeyboardButton(text="3", callback_data=f"{callback_prefix}_3_{index}")],
-        [InlineKeyboardButton(text="4", callback_data=f"{callback_prefix}_4_{index}")],
-        [InlineKeyboardButton(text="5", callback_data=f"{callback_prefix}_5_{index}")],
-        [InlineKeyboardButton(text="6 — Абсолютно про меня", callback_data=f"{callback_prefix}_6_{index}")]
+        [InlineKeyboardButton(text="Абсолютно не про меня", callback_data=f"{callback_prefix}_1_{index}")],
+        [InlineKeyboardButton(text="В основном не про меня", callback_data=f"{callback_prefix}_2_{index}")],
+        [InlineKeyboardButton(text="Скорее не про меня", callback_data=f"{callback_prefix}_3_{index}")],
+        [InlineKeyboardButton(text="Иногда про меня", callback_data=f"{callback_prefix}_4_{index}")],
+        [InlineKeyboardButton(text="В основном про меня", callback_data=f"{callback_prefix}_5_{index}")],
+        [InlineKeyboardButton(text="Абсолютно про меня", callback_data=f"{callback_prefix}_6_{index}")]
     ])
 
     await message.answer(text, reply_markup=keyboard)
@@ -245,7 +246,7 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     scores = data.get("scores", [0] * len(PROGRAMS))
 
     if prefix == "first":
-        scores[index] += score
+        scores[index] += score  # баллы только своей программе
     else:
         top8 = data.get("top8", [])
         prog_name = top8[index][0]
@@ -257,7 +258,7 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     await ask_question(callback.message, state)
     await callback.answer()
 
-# Завершение первого этапа (невидимый переход)
+# Завершение первого этапа (автоматический переход к второму)
 async def finish_first_stage(message: Message, state: FSMContext):
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
@@ -268,7 +269,7 @@ async def finish_first_stage(message: Message, state: FSMContext):
 
     await state.update_data(top8=top8, question_index=0, stage="second")
 
-    # Продолжаем без сообщения
+    # Продолжаем без сообщения пользователю
     await ask_question(message, state)
 
 # Финал диагностики
