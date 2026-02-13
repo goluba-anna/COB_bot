@@ -25,6 +25,12 @@ if not BOT_TOKEN:
     logger.error("BOT_TOKEN не задан!")
     raise ValueError("BOT_TOKEN обязательно должен быть задан")
 
+# ⚠️ ИЗМЕНЕНИЕ: Используем новую переменную WEBHOOK_URL_NEW
+# Если она не задана, пробуем старую WEBHOOK_URL для обратной совместимости
+WEBHOOK_URL = os.getenv("WEBHOOK_URL_NEW") or os.getenv("WEBHOOK_URL")
+if not WEBHOOK_URL:
+    logger.warning("WEBHOOK_URL_NEW не задан, бот будет работать в режиме поллинга")
+
 WEBHOOK_SECRET = os.getenv("WEBHOOK_SECRET", "secret")
 PORT = int(os.getenv("PORT", 8080))
 
@@ -196,15 +202,15 @@ async def echo_handler(message: types.Message):
 # ---------------- STARTUP ----------------
 async def on_startup(bot: Bot):
     try:
-        raw_url = os.getenv("WEBHOOK_URL")
-        logger.info(f"RAW WEBHOOK_URL: {raw_url}")
+        # ⚠️ ИЗМЕНЕНИЕ: Используем WEBHOOK_URL (уже содержит значение из новой переменной)
+        logger.info(f"RAW WEBHOOK_URL: {WEBHOOK_URL}")
         
-        if not raw_url:
+        if not WEBHOOK_URL:
             logger.warning("WEBHOOK_URL не задан, пропускаем установку вебхука")
             return
         
         # Убираем лишние слеши
-        webhook_url = raw_url.rstrip('/') + '/webhook'
+        webhook_url = WEBHOOK_URL.rstrip('/') + '/webhook'
         logger.info(f"FULL WEBHOOK_URL: {webhook_url}")
         
         # Устанавливаем вебхук
@@ -258,12 +264,10 @@ async def main():
     logger.info("Сервер запущен и ожидает обновлений")
     
     # Проверяем режим работы
-    if os.getenv("WEBHOOK_URL"):
+    if WEBHOOK_URL:
         logger.info("Режим: вебхук")
     else:
         logger.warning("Режим: поллинг (WEBHOOK_URL не задан)")
-        # Альтернативно можно запустить поллинг
-        # await dp.start_polling(bot)
     
     # Держим сервер запущенным
     await asyncio.Event().wait()
