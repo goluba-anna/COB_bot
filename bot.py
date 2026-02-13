@@ -143,22 +143,23 @@ async def back_to_start(callback: types.CallbackQuery, state: FSMContext):
 # Запуск
 async def on_startup(bot: Bot):
     try:
-        webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
+        raw_url = os.getenv("WEBHOOK_URL")
+        logger.info(f"RAW WEBHOOK_URL: {repr(raw_url)}")
+
+        webhook_url = f"{raw_url}/webhook"
+        logger.info(f"FULL WEBHOOK_URL: {repr(webhook_url)}")
+
         secret = os.getenv("WEBHOOK_SECRET", "secret")
-        if not webhook_url or not secret:
+
+        if not raw_url or not secret:
             logger.error("Отсутствует WEBHOOK_URL или WEBHOOK_SECRET!")
             return
+
         await bot.set_webhook(url=webhook_url, secret_token=secret)
         logger.info(f"Webhook установлен: {webhook_url}")
+
     except Exception as e:
         logger.error(f"Ошибка установки webhook: {e}")
-
-async def on_shutdown(bot: Bot):
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook удалён")
-    except Exception as e:
-        logger.error(f"Ошибка удаления webhook: {e}")
 
 async def main():
     dp.startup.register(on_startup)
