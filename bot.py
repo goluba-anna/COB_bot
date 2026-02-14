@@ -220,7 +220,7 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text("Отлично! Начинаем диагностику ❤️\n\nОтвечай честно — это всё останется между нами.")
 
     # Инициализируем баллы и индекс вопроса
-    await state.update_data(scores=[0] * len(PROGRAMS), question_index=0, total_questions=len(FIRST_STAGE_QUESTIONS) + 8)
+    await state.update_data(scores=[0] * len(PROGRAMS), question_index=0, stage="first")
 
     # Первый вопрос
     await ask_question(callback.message, state)
@@ -231,7 +231,6 @@ async def ask_question(message: Message, state: FSMContext):
     data = await state.get_data()
     stage = data.get("stage", "first")
     index = data.get("question_index", 0)
-    total = data.get("total_questions", 26)
 
     if stage == "first":
         if index >= len(FIRST_STAGE_QUESTIONS):
@@ -248,7 +247,7 @@ async def ask_question(message: Message, state: FSMContext):
         q_text = SECOND_STAGE_QUESTIONS[index]
         callback_prefix = "second"
 
-    text = f"Вопрос {index + 1} из {total}:\n\n{q_text}"
+    text = f"Вопрос {index + 1} из {len(FIRST_STAGE_QUESTIONS) + len(SECOND_STAGE_QUESTIONS)}:\n\n{q_text}"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1 — Абсолютно не про меня", callback_data=f"{callback_prefix}_1_{index}")],
@@ -295,6 +294,7 @@ async def finish_first_stage(message: Message, state: FSMContext):
 
     await state.update_data(top8=top8, question_index=0, stage="second")
 
+    # Продолжаем без сообщения
     await ask_question(message, state)
 
 # Финал диагностики
@@ -378,4 +378,3 @@ if __name__ == "__main__":
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
         raise
-    
