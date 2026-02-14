@@ -496,25 +496,32 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     scores = data.get("scores", [0] * len(PROGRAMS))
     current_stage = data.get("stage", "first")
 
-    if prefix == "first" and current_stage == "first":
-        if index < len(FIRST_STAGE_QUESTIONS):  # ← добавлена защита
-            scores[index] += score
-            # Сохраняем оригинальные баллы перед переходом к tie или second
-            if index == len(FIRST_STAGE_QUESTIONS) - 1:
-                await state.update_data(scores_original=scores.copy())
-        # После последнего вопроса первого этапа НЕ добавляем score — сразу переходим
+    # Защита: добавляем баллы ТОЛЬКО если индекс в пределах этапа
+    if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
+        scores[index] += score
+        # Сохраняем оригинальные баллы после последнего вопроса первого этапа
+        if index == len(FIRST_STAGE_QUESTIONS) - 1:
+            await state.update_data(scores_original=scores.copy())
+
     elif prefix == "second":
         top8 = data.get("top8", [])
         prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
-        if prog_index >= len(top8) or prog_index < 0:
+        if prog_index < 0 or prog_index >= len(top8):
             await finish_diagnostics(callback.message, state)
             return
         prog_name = top8[prog_index][0]
         prog_global_index = PROGRAMS.index(prog_name)
         scores[prog_global_index] += score
 
+    # Обновляем состояние и переходим к следующему вопросу
     await state.update_data(scores=scores, question_index=index + 1)
-    await ask_question(callback.message, state)
+
+    # Если это был последний вопрос первого этапа — принудительно переходим к tie-breaker
+    if prefix == "first" and index == len(FIRST_STAGE_QUESTIONS) - 1:
+        await check_tie_breaker(callback.message, state)
+    else:
+        await ask_question(callback.message, state)
+
     await callback.answer()
 
 async def finish_diagnostics(message: Message, state: FSMContext):
