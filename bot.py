@@ -24,7 +24,7 @@ dp = Dispatcher(storage=storage)
 class Form(StatesGroup):
     consent = State()
     question = State()
-    tie_breaker = State()  # Для разрешения ничьих
+    tie_breaker = State()
 
 PROGRAMS = [
     "Вечная пустота",
@@ -380,7 +380,9 @@ async def ask_question(message: Message, state: FSMContext):
     index = data.get("question_index", 0)
     stage = data.get("stage", "first")
 
-    # Если вышли за пределы первого этапа — сразу переходим
+    logger.info(f"ask_question: stage={stage}, index={index}")
+
+    # Если вышли за пределы первого этапа — переходим дальше
     if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
         await check_tie_breaker(message, state)
         return
@@ -421,26 +423,25 @@ async def ask_question(message: Message, state: FSMContext):
     ])
 
     await message.answer(text, reply_markup=keyboard)
-
+    
 async def check_tie_breaker(message: Message, state: FSMContext):
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
 
-    # Сохраняем оригинальные баллы перед tie-breaker
+    logger.info(f"check_tie_breaker: scores={scores}")
+
     await state.update_data(scores_original=scores.copy())
 
     max_score = max(scores)
     tied_indices = [i for i, s in enumerate(scores) if s == max_score]
 
     if len(tied_indices) <= 1:
-        # Нет ничьей — сразу топ-8 и второй этап
         program_scores = list(zip(PROGRAMS, scores))
         program_scores.sort(key=lambda x: x[1], reverse=True)
         top8 = program_scores[:8]
         await state.update_data(top8=top8, stage="second", question_index=len(FIRST_STAGE_QUESTIONS))
         await ask_question(message, state)
     else:
-        # Есть ничья — задаём вопрос
         tied_desc = [TIE_DESCRIPTIONS[i] for i in tied_indices]
         text = "Чтобы точнее понять, какая из этих ситуаций тебя волнует сильнее всего сейчас, выбери одну:\n\n"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[])
@@ -460,10 +461,8 @@ async def process_tie_breaker(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
 
-    # Добавляем +3 ТОЛЬКО выбранной программе (для разрешения ничьей)
     scores[prog_index] += 3
 
-    # Пересчитываем топ-8 с учётом бонуса (только для выбора программ)
     program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top8 = program_scores[:8]
@@ -490,14 +489,13 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     scores = data.get("scores", [0] * len(PROGRAMS))
     current_stage = data.get("stage", "first")
 
-    # Добавляем баллы ТОЛЬКО если это вопрос первого этапа и индекс в пределах
+    logger.info(f"process_answer: prefix={prefix}, index={index}, stage={current_stage}")
+
     if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
         scores[index] += score
-        # Сохраняем оригинальные баллы после последнего вопроса первого этапа
         if index == len(FIRST_STAGE_QUESTIONS) - 1:
             await state.update_data(scores_original=scores.copy())
 
-    # Для второго этапа — добавляем к программе из топ-8
     elif prefix == "second":
         top8 = data.get("top8", [])
         prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
@@ -508,10 +506,8 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
         prog_global_index = PROGRAMS.index(prog_name)
         scores[prog_global_index] += score
 
-    # Обновляем состояние
     await state.update_data(scores=scores, question_index=index + 1)
 
-    # КРИТИЧЕСКИЙ МОМЕНТ: если это был последний вопрос первого этапа — сразу переходим к tie-breaker
     if prefix == "first" and index == len(FIRST_STAGE_QUESTIONS) - 1:
         await check_tie_breaker(callback.message, state)
     else:
@@ -521,14 +517,14 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     
 async def finish_diagnostics(message: Message, state: FSMContext):
     data = await state.get_data()
-    # Используем оригинальные баллы (без +3 от tie-breaker)
     scores = data.get("scores_original", data.get("scores", [0] * len(PROGRAMS)))
+
+    logger.info(f"finish_diagnostics: scores={scores}")
 
     program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top3 = program_scores[:3]
 
-    # 1. Короткое сообщение с топ-3 и баллами
     text_top = "Диагностика завершена! ❤️\n\nТвои топ-3 программы:\n\n"
     for i, (prog, score) in enumerate(top3, 1):
         text_top += f"{i}. {prog} — {score} баллов\n"
@@ -536,29 +532,22 @@ async def finish_diagnostics(message: Message, state: FSMContext):
 
     await message.answer(text_top, parse_mode="HTML")
 
-    # 2. Отдельное сообщение на каждую программу
     for i, (prog, score) in enumerate(top3, 1):
         desc = PROGRAM_DESCRIPTIONS[PROGRAMS.index(prog)]
         text_desc = f"<b>{i}. {prog}</b>\n\n{desc}"
         await message.answer(text_desc, parse_mode="HTML")
-        await asyncio.sleep(0.8)  # небольшая пауза, чтобы избежать флуда
+        await asyncio.sleep(0.8)
 
-    # 3. Финальное предложение купить
     text_buy = """<b>ЧТО ДАЛЬШЕ? УВИДЕТЬ ВСЮ КАРТИНУ</b>
-
 То, что ты сейчас узнал(а) — это только 20% информации о твоих программах (например, твоя топ-1 "{top3[0][0]}" уже блокирует прощение и близость).
-
 Ты можешь получить подробное описание этих программ в файле всего за 699₽, и узнать:
 🌿 Из каких именно детских переживаний выросли твои программы
 🔎 Как они формируют твои отношения, деньги и карьерные выборы
 🧭 Что именно в твоей текущей жизни поддерживает эти программы
 💡 Рекомендации для выхода из автоматических сценариев
-
 Это как получить карту своей психики с понятным маршрутом изменений.
-
 Если хочешь разобрать их чуть глубже — выбирай личный мини-разбор (30-40 минут за 1 000₽).
 Или сразу глубокая консультация (6 000₽ вместо 8 000₽ для прошедших диагностику).
-
 Готов(а) получить файл, мини-разбор или консультацию? Выбери ниже!"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
@@ -568,7 +557,6 @@ async def finish_diagnostics(message: Message, state: FSMContext):
     ])
 
     await message.answer(text_buy, reply_markup=keyboard, parse_mode="HTML")
-
     await state.clear()
 
 async def on_startup(bot: Bot):
