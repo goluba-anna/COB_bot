@@ -380,23 +380,40 @@ async def ask_question(message: Message, state: FSMContext):
     index = data.get("question_index", 0)
     stage = data.get("stage", "first")
 
-    if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
-        await check_tie_breaker(message, state)
-        return
+    q_text = None  # Инициализируем заранее, чтобы избежать UnboundLocalError
+    callback_prefix = None
+
+    if stage == "first":
+        if index < len(FIRST_STAGE_QUESTIONS):
+            q_text = FIRST_STAGE_QUESTIONS[index]
+            callback_prefix = "first"
+        else:
+            # Переход к tie-breaker или second этапу
+            await check_tie_breaker(message, state)
+            return  # Важно: return, чтобы не доходить до формирования текста
+
     elif stage == "tie_breaker":
-        return  # обработка в process_tie_breaker
+        # Здесь не формируем вопрос — он уже отправлен в check_tie_breaker
+        return
+
     elif stage == "second":
         top8 = data.get("top8", [])
         if not top8:
             await finish_diagnostics(message, state)
             return
         prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
-        if prog_index >= len(top8):
+        if prog_index >= len(top8) or prog_index < 0:
             await finish_diagnostics(message, state)
             return
         prog_name = top8[prog_index][0]
         q_text = SECOND_STAGE_QUESTIONS[PROGRAMS.index(prog_name)]
         callback_prefix = "second"
+
+    # Если q_text всё ещё None — это ошибка перехода этапов
+    if q_text is None:
+        logger.error(f"q_text не определён для stage={stage}, index={index}")
+        await finish_diagnostics(message, state)
+        return
 
     text = f"Вопрос {index + 1}:\n\n{q_text}"
 
