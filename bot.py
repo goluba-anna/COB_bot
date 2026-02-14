@@ -24,7 +24,7 @@ dp = Dispatcher(storage=storage)
 class Form(StatesGroup):
     consent = State()
     question = State()
-
+    
 # 18 программ
 PROGRAMS = [
     "Страх брошенности",
@@ -249,6 +249,7 @@ PROGRAM_DESCRIPTIONS = [
 Эта программа влияет на жизнь, вызывая глубокое одиночество даже среди людей, и тормозит настоящую связь, не позволяя почувствовать, что тебя действительно видят и принимают."""
 ]
 
+# Приветствие
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     username = message.from_user.first_name or "друг"
