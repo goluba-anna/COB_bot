@@ -380,22 +380,17 @@ async def ask_question(message: Message, state: FSMContext):
     index = data.get("question_index", 0)
     stage = data.get("stage", "first")
 
-    q_text = None  # Инициализируем заранее, чтобы избежать UnboundLocalError
+    # Если вышли за пределы первого этапа — сразу переходим
+    if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
+        await check_tie_breaker(message, state)
+        return
+
+    q_text = None
     callback_prefix = None
 
     if stage == "first":
-        if index < len(FIRST_STAGE_QUESTIONS):
-            q_text = FIRST_STAGE_QUESTIONS[index]
-            callback_prefix = "first"
-        else:
-            # Переход к tie-breaker или second этапу
-            await check_tie_breaker(message, state)
-            return  # Важно: return, чтобы не доходить до формирования текста
-
-    elif stage == "tie_breaker":
-        # Здесь не формируем вопрос — он уже отправлен в check_tie_breaker
-        return
-
+        q_text = FIRST_STAGE_QUESTIONS[index]
+        callback_prefix = "first"
     elif stage == "second":
         top8 = data.get("top8", [])
         if not top8:
@@ -409,9 +404,8 @@ async def ask_question(message: Message, state: FSMContext):
         q_text = SECOND_STAGE_QUESTIONS[PROGRAMS.index(prog_name)]
         callback_prefix = "second"
 
-    # Если q_text всё ещё None — это ошибка перехода этапов
     if q_text is None:
-        logger.error(f"q_text не определён для stage={stage}, index={index}")
+        logger.error(f"q_text не определён: stage={stage}, index={index}")
         await finish_diagnostics(message, state)
         return
 
@@ -496,14 +490,14 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     scores = data.get("scores", [0] * len(PROGRAMS))
     current_stage = data.get("stage", "first")
 
-    # 1. Добавляем баллы ТОЛЬКО если это действительно вопрос первого этапа
+    # Добавляем баллы ТОЛЬКО если это вопрос первого этапа и индекс в пределах
     if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
         scores[index] += score
         # Сохраняем оригинальные баллы после последнего вопроса первого этапа
         if index == len(FIRST_STAGE_QUESTIONS) - 1:
             await state.update_data(scores_original=scores.copy())
 
-    # 2. Для второго этапа — добавляем к соответствующей программе из топ-8
+    # Для второго этапа — добавляем к программе из топ-8
     elif prefix == "second":
         top8 = data.get("top8", [])
         prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
@@ -514,17 +508,17 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
         prog_global_index = PROGRAMS.index(prog_name)
         scores[prog_global_index] += score
 
-    # 3. Обновляем состояние
+    # Обновляем состояние
     await state.update_data(scores=scores, question_index=index + 1)
 
-    # 4. КРИТИЧЕСКИЙ ПЕРЕХОД: если это был последний вопрос первого этапа — сразу переходим к tie-breaker
+    # КРИТИЧЕСКИЙ МОМЕНТ: если это был последний вопрос первого этапа — сразу переходим к tie-breaker
     if prefix == "first" and index == len(FIRST_STAGE_QUESTIONS) - 1:
         await check_tie_breaker(callback.message, state)
     else:
         await ask_question(callback.message, state)
 
     await callback.answer()
-
+    
 async def finish_diagnostics(message: Message, state: FSMContext):
     data = await state.get_data()
     # Используем оригинальные баллы (без +3 от tie-breaker)
