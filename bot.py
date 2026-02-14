@@ -24,6 +24,7 @@ dp = Dispatcher(storage=storage)
 class Form(StatesGroup):
     consent = State()
     question = State()
+    tie_breaker = State()  # Новое состояние для разрешения ничьих
     
 # 18 программ
 PROGRAMS = [
@@ -47,7 +48,29 @@ PROGRAMS = [
     "Никто не нужен"
 ]
 
-# Вопросы первого этапа — по одному на каждую программу
+# Косвенные описания для tie-breaker (короткие, в порядке PROGRAMS)
+TIE_DESCRIPTIONS = [
+    "Когда близкий отдаляется — внутри паника: меня бросят, я останусь одна навсегда.",
+    "Когда пытаюсь довериться — сразу жду обмана, предательства, использования.",
+    "Даже в объятиях и любви — внутри пустота, которую никто не может заполнить.",
+    "Когда меня хвалят — мысль: «они ещё не знают настоящую меня, сейчас разочаруются».",
+    "Когда пытаюсь сказать «нет» — сильная вина и страх потерять связь.",
+    "Любая критика ранит так, будто меня целиком отвергают.",
+    "В отношениях полностью растворяюсь в партнёре, теряю себя.",
+    "Постоянно критикую себя и других за малейшие ошибки.",
+    "Чувствую сильные эмоции — сразу подавляю, чтобы не казаться слабой.",
+    "Часто угождаю и соглашаюсь, лишь бы не потерять одобрение.",
+    "Ставлю чужие нужды выше своих — потом обида, что обо мне не заботятся.",
+    "Без похвалы и признания чувствую себя почти невидимой.",
+    "Всё кажется плохим и безнадёжным — фокусируюсь только на худшем.",
+    "Близка к успеху — сама начинаю саботировать, портить.",
+    "Держу себя в жёстком контроле — не разрешаю расслабиться.",
+    "Чувствую себя то намного лучше всех, то намного хуже.",
+    "Веду внутренний суд: ошибка должна быть наказана, прощение — слабость.",
+    "Даже среди людей и в любви чувствую, что я никому по-настоящему не нужна."
+]
+
+# Вопросы первого этапа
 FIRST_STAGE_QUESTIONS = [
     "Я постоянно боюсь, что близкий человек охладеет или уйдёт, и цепляюсь за него, чтобы этого не случилось.",
     "Я всегда сканирую слова и действия людей, ожидая, что они меня обманут или предадут.",
@@ -69,7 +92,7 @@ FIRST_STAGE_QUESTIONS = [
     "Даже среди людей я чувствую себя чужим, как будто стою за стеклом и не могу присоединиться."
 ]
 
-# Углубляющие вопросы для топ-8 (по одному на программу)
+# Углубляющие вопросы для топ-8
 SECOND_STAGE_QUESTIONS = [
     "В отношениях я угождаю и контролирую, чтобы человек не ушёл, но это меня истощает эмоционально.",
     "Я редко расслабляюсь в отношениях, потому что подсознательно жду предательства или обмана.",
@@ -249,7 +272,7 @@ PROGRAM_DESCRIPTIONS = [
 Эта программа влияет на жизнь, вызывая глубокое одиночество даже среди людей, и тормозит настоящую связь, не позволяя почувствовать, что тебя действительно видят и принимают."""
 ]
 
-# Приветствие
+# Приветствие и начало (без изменений)
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     username = message.from_user.first_name or "друг"
@@ -360,24 +383,33 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
 async def ask_question(message: Message, state: FSMContext):
     data = await state.get_data()
     index = data.get("question_index", 0)
+    stage = data.get("stage", "first")
 
-    if index < len(FIRST_STAGE_QUESTIONS):
-        q_text = FIRST_STAGE_QUESTIONS[index]
-        callback_prefix = "first"
-    elif index < len(FIRST_STAGE_QUESTIONS) + len(SECOND_STAGE_QUESTIONS):
+    if stage == "first":
+        if index < len(FIRST_STAGE_QUESTIONS):
+            q_text = FIRST_STAGE_QUESTIONS[index]
+            callback_prefix = "first"
+        else:
+            # Переход к tie-breaker или сразу к second
+            await check_tie_breaker(message, state)
+            return
+    elif stage == "tie_breaker":
+        # Здесь будет обработка в отдельном хендлере
+        return
+    elif stage == "second":
         top8 = data.get("top8", [])
         if not top8:
-            await finish_first_stage(message, state)
+            await finish_diagnostics(message, state)
             return
-        prog_index = index - len(FIRST_STAGE_QUESTIONS)
+        prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
+        if prog_index >= len(top8):
+            await finish_diagnostics(message, state)
+            return
         prog_name = top8[prog_index][0]
         q_text = SECOND_STAGE_QUESTIONS[PROGRAMS.index(prog_name)]
         callback_prefix = "second"
-    else:
-        await finish_diagnostics(message, state)
-        return
 
-    text = f"Вопрос {index + 1} из 26:\n\n{q_text}"
+    text = f"Вопрос {index + 1}:\n\n{q_text}"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1 — Абсолютно не про меня", callback_data=f"{callback_prefix}_1_{index}")],
@@ -389,67 +421,75 @@ async def ask_question(message: Message, state: FSMContext):
     ])
 
     await message.answer(text, reply_markup=keyboard)
-
-@dp.callback_query(lambda c: c.data.startswith(("first_", "second_")))
-async def process_answer(callback: CallbackQuery, state: FSMContext):
-    prefix, score_str, index_str = callback.data.split("_")
-    score = int(score_str)
-    index = int(index_str)
-
+async def check_tie_breaker(message: Message, state: FSMContext):
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
 
-    if prefix == "first":
-        scores[index] += score
+    # Находим максимальный балл после первого этапа
+    max_score = max(scores)
+    tied_programs = [i for i, s in enumerate(scores) if s == max_score]
+
+    if len(tied_programs) <= 1:
+        # Нет ничьей — сразу строим топ-8 и идём к уточняющим
+        program_scores = list(zip(PROGRAMS, scores))
+        program_scores.sort(key=lambda x: x[1], reverse=True)
+        top8 = program_scores[:8]
+        await state.update_data(top8=top8, stage="second", question_index=len(FIRST_STAGE_QUESTIONS))
+        await ask_question(message, state)
     else:
-        top8 = data.get("top8", [])
-        prog_index = index - len(FIRST_STAGE_QUESTIONS)
-        prog_name = top8[prog_index][0]
-        prog_global_index = PROGRAMS.index(prog_name)
-        scores[prog_global_index] += score
+        # Есть ничья — задаём tie-breaker вопрос
+        tied_desc = [TIE_DESCRIPTIONS[i] for i in tied_programs]
+        text = "Чтобы точнее понять, какая из этих ситуаций тебя волнует сильнее всего сейчас, выбери одну:\n\n"
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        for idx, desc in enumerate(tied_desc, 1):
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(text=f"{idx}. {desc}", callback_data=f"tie_{idx}_{tied_programs[idx-1]}")
+            ])
+        await message.answer(text, reply_markup=keyboard)
+        await state.update_data(tie_candidates=tied_programs, stage="tie_breaker")
 
-    await state.update_data(scores=scores, question_index=index + 1)
+@dp.callback_query(lambda c: c.data.startswith("tie_"))
+async def process_tie_breaker(callback: CallbackQuery, state: FSMContext):
+    _, choice_str, prog_index_str = callback.data.split("_")
+    choice = int(choice_str)
+    prog_index = int(prog_index_str)
 
-    await ask_question(callback.message, state)
-    await callback.answer()
-
-async def finish_first_stage(message: Message, state: FSMContext):
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
 
+    # Добавляем +3 балла ТОЛЬКО выбранной программе для разрешения ничьей
+    scores[prog_index] += 3
+
+    # Пересчитываем топ-8 уже с учётом этого бонуса
     program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top8 = program_scores[:8]
 
-    await state.update_data(top8=top8)
+    await state.update_data(
+        scores=scores,  # сохраняем баллы с бонусом (но ниже мы их очистим для финала)
+        top8=top8,
+        stage="second",
+        question_index=len(FIRST_STAGE_QUESTIONS),
+        tie_questions=1  # отметка, что был 1 доп. вопрос
+    )
 
-    await ask_question(message, state)
+    await callback.message.edit_text("Спасибо! Теперь всё стало яснее. Продолжаем уточняющие вопросы.")
+    await ask_question(callback.message, state)
+    await callback.answer()
 
 async def finish_diagnostics(message: Message, state: FSMContext):
     data = await state.get_data()
-    scores = data.get("scores", [0] * len(PROGRAMS))
+    scores = data.get("scores_original", data.get("scores", [0] * len(PROGRAMS)))  # используем оригинальные без tie-бонуса
 
     program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top3 = program_scores[:3]
 
-    # 1. Короткое сообщение с топ-3 (названия + баллы)
-    text_top = "Диагностика завершена! ❤️\n\nТвои топ-3 программы:\n\n"
-    for i, (prog, score) in enumerate(top3, 1):
-        text_top += f"{i}. {prog} — {score} баллов\n"
-    text_top += "\nСейчас пришлю подробные описания каждой из них (по одному сообщению на программу)."
-
-    await message.answer(text_top, parse_mode="HTML")
-
-    # 2. Три отдельных сообщения — по одному описанию
+    text = "Диагностика завершена!\n\nТвои топ-3 программы:\n\n"
     for i, (prog, score) in enumerate(top3, 1):
         desc = PROGRAM_DESCRIPTIONS[PROGRAMS.index(prog)]
-        text_desc = f"<b>{i}. {prog}</b>\n\n{desc}"
-        await message.answer(text_desc, parse_mode="HTML")
-        await asyncio.sleep(0.7)  # пауза 0.7 сек между сообщениями, чтобы Telegram не посчитал флудом
-
-    # 3. Финальное сообщение с предложением купить
-    text_buy = """ЧТО ДАЛЬШЕ? УВИДЕТЬ ВСЮ КАРТИНУ
+        text += f"{i}. {prog} — {score} баллов\n{desc}\n\n"
+   text += "\nЧТО ДАЛЬШЕ? УВИДЕТЬ ВСЮ КАРТИНУ
 
 То, что ты сейчас узнал(а) — это только 20% информации о твоих программах (например, твоя топ-1 "{top3[0][0]}" уже блокирует прощение и близость).
 
@@ -472,9 +512,13 @@ async def finish_diagnostics(message: Message, state: FSMContext):
         [InlineKeyboardButton(text="Консультация — 7000₽", callback_data="buy_consult")]
     ])
 
-    await message.answer(text_buy, reply_markup=keyboard, parse_mode="HTML")
-
+    await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
     await state.clear()
+
+# В process_answer при первом этапе сохраняем оригинальные баллы перед tie-breaker
+# Добавь в начало process_answer (для first):
+if prefix == "first" and index == len(FIRST_STAGE_QUESTIONS) - 1:
+    await state.update_data(scores_original=scores.copy())
 
 @dp.callback_query(lambda c: c.data.startswith("buy_"))
 async def buy_option(callback: CallbackQuery):
