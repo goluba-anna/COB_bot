@@ -247,7 +247,7 @@ async def ask_question(message: Message, state: FSMContext):
         q_text = SECOND_STAGE_QUESTIONS[index]
         callback_prefix = "second"
 
-    text = f"Вопрос {index + 1} из {len(FIRST_STAGE_QUESTIONS) + len(SECOND_STAGE_QUESTIONS)}:\n\n{q_text}"
+    text = f"Вопрос {index + 1} из 26:\n\n{q_text}"
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="1 — Абсолютно не про меня", callback_data=f"{callback_prefix}_1_{index}")],
