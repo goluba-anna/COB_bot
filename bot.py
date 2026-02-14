@@ -496,13 +496,14 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     scores = data.get("scores", [0] * len(PROGRAMS))
     current_stage = data.get("stage", "first")
 
-    # Защита: добавляем баллы ТОЛЬКО если индекс в пределах этапа
+    # 1. Добавляем баллы ТОЛЬКО если это действительно вопрос первого этапа
     if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
         scores[index] += score
         # Сохраняем оригинальные баллы после последнего вопроса первого этапа
         if index == len(FIRST_STAGE_QUESTIONS) - 1:
             await state.update_data(scores_original=scores.copy())
 
+    # 2. Для второго этапа — добавляем к соответствующей программе из топ-8
     elif prefix == "second":
         top8 = data.get("top8", [])
         prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
@@ -513,10 +514,10 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
         prog_global_index = PROGRAMS.index(prog_name)
         scores[prog_global_index] += score
 
-    # Обновляем состояние и переходим к следующему вопросу
+    # 3. Обновляем состояние
     await state.update_data(scores=scores, question_index=index + 1)
 
-    # Если это был последний вопрос первого этапа — принудительно переходим к tie-breaker
+    # 4. КРИТИЧЕСКИЙ ПЕРЕХОД: если это был последний вопрос первого этапа — сразу переходим к tie-breaker
     if prefix == "first" and index == len(FIRST_STAGE_QUESTIONS) - 1:
         await check_tie_breaker(callback.message, state)
     else:
