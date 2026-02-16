@@ -443,12 +443,12 @@ async def ask_question(message: Message, state: FSMContext):
 
     logger.info(f"ask_question called: stage={stage}, index={index}")
 
-    # Если первый этап завершен
+    # Если первый этап завершен - переходим к tie-breaker или второму этапу
     if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
         await check_tie_breaker(message, state)
         return
 
-    # Если второй этап завершен
+    # Если второй этап завершен - переходим к финалу
     if stage == "second" and index >= len(FIRST_STAGE_QUESTIONS) + len(data.get("top8", [])):
         await finish_diagnostics(message, state)
         return
@@ -463,22 +463,26 @@ async def ask_question(message: Message, state: FSMContext):
     elif stage == "second":
         top8 = data.get("top8", [])
         if not top8:
+            logger.error("top8 is empty in second stage")
             await finish_diagnostics(message, state)
             return
             
-        # Вычисляем индекс в top8
-        prog_index = index - len(FIRST_STAGE_QUESTIONS)
+        # Вычисляем индекс в top8 (0-7)
+        # Если был tie-breaker, вопросы второго этапа начинаются после 18 + 1 вопроса
+        tie_questions = data.get("tie_questions", 0)
+        prog_index = index - len(FIRST_STAGE_QUESTIONS) - tie_questions
         
-        # Если был tie-breaker, сдвигаем индекс
-        if data.get("tie_questions", 0) > 0:
-            prog_index -= 1
-            
+        logger.info(f"second stage: index={index}, prog_index={prog_index}, tie_questions={tie_questions}")
+        
         if prog_index >= len(top8) or prog_index < 0:
+            logger.error(f"prog_index out of range: {prog_index}, top8 len={len(top8)}")
             await finish_diagnostics(message, state)
             return
             
         prog_name = top8[prog_index][0]
-        q_text = SECOND_STAGE_QUESTIONS[PROGRAMS.index(prog_name)]
+        # Находим соответствующий вопрос для этой программы
+        prog_global_index = PROGRAMS.index(prog_name)
+        q_text = SECOND_STAGE_QUESTIONS[prog_global_index]
         callback_prefix = "second"
 
     if q_text is None:
@@ -505,6 +509,7 @@ async def check_tie_breaker(message: Message, state: FSMContext):
 
     logger.info(f"check_tie_breaker: scores={scores}")
 
+    # Сохраняем оригинальные баллы
     await state.update_data(scores_original=scores.copy())
 
     max_score = max(scores)
@@ -521,6 +526,7 @@ async def check_tie_breaker(message: Message, state: FSMContext):
             question_index=len(FIRST_STAGE_QUESTIONS),
             tie_questions=0
         )
+        logger.info(f"No tie-breaker needed, moving to second stage with top8: {[p[0] for p in top8]}")
         await ask_question(message, state)
     else:
         # Есть равные баллы — задаем tie-breaker вопрос
@@ -529,7 +535,6 @@ async def check_tie_breaker(message: Message, state: FSMContext):
         keyboard = InlineKeyboardMarkup(inline_keyboard=[])
         for idx, desc in enumerate(tied_desc, 1):
             prog_idx = tied_indices[idx-1]
-            # Важно: передаем и индекс программы, и позицию в списке tie
             keyboard.inline_keyboard.append([
                 InlineKeyboardButton(text=f"{idx}. {desc}", callback_data=f"tie_{idx}_{prog_idx}")
             ])
@@ -537,35 +542,45 @@ async def check_tie_breaker(message: Message, state: FSMContext):
         await state.update_data(
             tie_candidates=tied_indices, 
             stage="tie_breaker",
-            tie_questions=1  # Отмечаем, что был tie-breaker
+            tie_questions=1  # Отмечаем, что будет tie-breaker вопрос
         )
+        logger.info(f"Tie-breaker needed for programs: {tied_indices}")
 
 @dp.callback_query(lambda c: c.data.startswith("tie_"))
 async def process_tie_breaker(callback: CallbackQuery, state: FSMContext):
-    _, choice_str, prog_index_str = callback.data.split("_")
-    prog_index = int(prog_index_str)
+    # Разбираем callback_data: tie_1_3 (где 3 - индекс программы)
+    parts = callback.data.split("_")
+    prog_index = int(parts[2])
 
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
 
+    # Добавляем 3 балла выбранной программе
     scores[prog_index] += 3
 
+    # Формируем топ-8 с новыми баллами
     program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top8 = program_scores[:8]
 
+    logger.info(f"Tie-breaker chosen: program {PROGRAMS[prog_index]}, new top8: {[p[0] for p in top8]}")
+
+    # ВАЖНО: переходим ко второму этапу!
     await state.update_data(
         scores=scores,
+        scores_original=scores,  # Сохраняем для финала
         top8=top8,
         stage="second",
-        question_index=len(FIRST_STAGE_QUESTIONS),
-        tie_questions=1
+        question_index=len(FIRST_STAGE_QUESTIONS),  # Начинаем после первого этапа
+        tie_questions=1  # Запоминаем, что был tie-breaker
     )
 
-    await callback.message.edit_text("Спасибо! Теперь всё стало яснее. Продолжаем уточняющие вопросы.")
+    await callback.message.edit_text("Спасибо! Теперь всё стало яснее. Переходим к уточняющим вопросам по каждой программе.")
+    
+    # Переходим к первому вопросу второго этапа
     await ask_question(callback.message, state)
     await callback.answer()
-
+    
 @dp.callback_query(lambda c: c.data.startswith(("first_", "second_")))
 async def process_answer(callback: CallbackQuery, state: FSMContext):
     prefix, score_str, index_str = callback.data.split("_")
@@ -575,26 +590,41 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
     current_stage = data.get("stage", "first")
+    tie_questions = data.get("tie_questions", 0)
 
-    logger.info(f"process_answer: prefix={prefix}, index={index}, stage={current_stage}")
+    logger.info(f"process_answer: prefix={prefix}, index={index}, stage={current_stage}, tie_questions={tie_questions}")
 
+    # Обработка первого этапа
     if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
         scores[index] += score
         if index == len(FIRST_STAGE_QUESTIONS) - 1:
             await state.update_data(scores_original=scores.copy())
 
-    elif prefix == "second":
+    # Обработка второго этапа
+    elif prefix == "second" and current_stage == "second":
         top8 = data.get("top8", [])
-        prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
+        
+        # Вычисляем индекс в top8 (0-7)
+        prog_index = index - len(FIRST_STAGE_QUESTIONS) - tie_questions
+        
+        logger.info(f"second stage: index={index}, prog_index={prog_index}, tie_questions={tie_questions}")
+        
         if prog_index < 0 or prog_index >= len(top8):
+            logger.error(f"prog_index out of range: {prog_index}")
             await finish_diagnostics(callback.message, state)
+            await callback.answer()
             return
+            
         prog_name = top8[prog_index][0]
         prog_global_index = PROGRAMS.index(prog_name)
         scores[prog_global_index] += score
+        
+        logger.info(f"Added {score} to program {prog_name}")
 
+    # Обновляем состояние
     await state.update_data(scores=scores, question_index=index + 1)
 
+    # Проверяем, нужно ли перейти к tie-breaker
     if prefix == "first" and index == len(FIRST_STAGE_QUESTIONS) - 1:
         await check_tie_breaker(callback.message, state)
     else:
