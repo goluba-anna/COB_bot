@@ -443,8 +443,14 @@ async def ask_question(message: Message, state: FSMContext):
 
     logger.info(f"ask_question called: stage={stage}, index={index}")
 
+    # Если первый этап завершен
     if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
         await check_tie_breaker(message, state)
+        return
+
+    # Если второй этап завершен
+    if stage == "second" and index >= len(FIRST_STAGE_QUESTIONS) + len(data.get("top8", [])):
+        await finish_diagnostics(message, state)
         return
 
     q_text = None
@@ -453,15 +459,24 @@ async def ask_question(message: Message, state: FSMContext):
     if stage == "first":
         q_text = FIRST_STAGE_QUESTIONS[index]
         callback_prefix = "first"
+        
     elif stage == "second":
         top8 = data.get("top8", [])
         if not top8:
             await finish_diagnostics(message, state)
             return
-        prog_index = index - len(FIRST_STAGE_QUESTIONS) - data.get("tie_questions", 0)
+            
+        # Вычисляем индекс в top8
+        prog_index = index - len(FIRST_STAGE_QUESTIONS)
+        
+        # Если был tie-breaker, сдвигаем индекс
+        if data.get("tie_questions", 0) > 0:
+            prog_index -= 1
+            
         if prog_index >= len(top8) or prog_index < 0:
             await finish_diagnostics(message, state)
             return
+            
         prog_name = top8[prog_index][0]
         q_text = SECOND_STAGE_QUESTIONS[PROGRAMS.index(prog_name)]
         callback_prefix = "second"
@@ -496,22 +511,34 @@ async def check_tie_breaker(message: Message, state: FSMContext):
     tied_indices = [i for i, s in enumerate(scores) if s == max_score]
 
     if len(tied_indices) <= 1:
+        # Нет равных баллов — сразу переходим ко второму этапу
         program_scores = list(zip(PROGRAMS, scores))
         program_scores.sort(key=lambda x: x[1], reverse=True)
         top8 = program_scores[:8]
-        await state.update_data(top8=top8, stage="second", question_index=len(FIRST_STAGE_QUESTIONS))
+        await state.update_data(
+            top8=top8, 
+            stage="second", 
+            question_index=len(FIRST_STAGE_QUESTIONS),
+            tie_questions=0
+        )
         await ask_question(message, state)
     else:
+        # Есть равные баллы — задаем tie-breaker вопрос
         tied_desc = [TIE_DESCRIPTIONS[i] for i in tied_indices]
         text = "Чтобы точнее понять, какая из этих ситуаций тебя волнует сильнее всего сейчас, выбери одну:\n\n"
         keyboard = InlineKeyboardMarkup(inline_keyboard=[])
         for idx, desc in enumerate(tied_desc, 1):
             prog_idx = tied_indices[idx-1]
+            # Важно: передаем и индекс программы, и позицию в списке tie
             keyboard.inline_keyboard.append([
                 InlineKeyboardButton(text=f"{idx}. {desc}", callback_data=f"tie_{idx}_{prog_idx}")
             ])
         await message.answer(text, reply_markup=keyboard)
-        await state.update_data(tie_candidates=tied_indices, stage="tie_breaker")
+        await state.update_data(
+            tie_candidates=tied_indices, 
+            stage="tie_breaker",
+            tie_questions=1  # Отмечаем, что был tie-breaker
+        )
 
 @dp.callback_query(lambda c: c.data.startswith("tie_"))
 async def process_tie_breaker(callback: CallbackQuery, state: FSMContext):
