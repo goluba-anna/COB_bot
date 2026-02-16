@@ -334,8 +334,6 @@ PROGRAM_DESCRIPTIONS = [
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     username = message.from_user.first_name or "друг"
-   async def start_handler(message: Message, state: FSMContext):
-    username = message.from_user.first_name or "друг"
     text = f"""Привет, {username}! ❤️
 
 Бывает, что жизнь будто ходит по одному и тому же кругу:
@@ -610,7 +608,7 @@ async def finish_diagnostics(message: Message, state: FSMContext):
 
     top1_desc = program_short_desc.get(top1_name, "уже сильно влияет на твою жизнь")
 
-     text_top = f"""✨ <b>Диагностика завершена!</b> ✨
+    text_top = f"""✨ <b>Диагностика завершена!</b> ✨
 
 Твои топ-3 программы:
 
