@@ -634,11 +634,14 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
 
 async def finish_diagnostics(message: Message, state: FSMContext):
     data = await state.get_data()
+    # Используем scores_original если есть, иначе scores
     scores = data.get("scores_original", data.get("scores", [0] * len(PROGRAMS)))
 
     program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top3 = program_scores[:3]
+
+    logger.info(f"Finishing diagnostics with top3: {top3}")
 
     top1_name = top3[0][0] if top3 else "программа"
 
