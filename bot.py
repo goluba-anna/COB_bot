@@ -374,9 +374,9 @@ async def about_method_callback(callback: CallbackQuery):
 async def show_legal(callback: CallbackQuery):
     text = """<b>Условия и документы</b>
 
-• <a href="...">Публичная оферта</a>  
-• <a href="...">Согласие на обработку персональных данных</a>  
-• <a href="...">Согласие на получение уведомлений</a>
+• <a href="https://drive.google.com/file/d/1hNsbGW4igNVqJXjl3tApcbSXrNQiX27K/view?usp=sharing">Публичная оферта</a>  
+• <a href="https://drive.google.com/file/d/1lP5d-MCBvNpxNBV1hZSCRHByWgFz5LEP/view?usp=sharing">Согласие на обработку персональных данных</a>  
+• <a href="https://drive.google.com/file/d/1Z3250DPzMun4fuijStmcgIBN8H36-vKy/view?usp=sharing">Согласие на получение уведомлений</a>
 
 После ознакомления просто вернись и нажми «Начать диагностику» ❤️"""
 
