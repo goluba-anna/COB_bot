@@ -331,6 +331,8 @@ PROGRAM_DESCRIPTIONS = [
 Эта программа влияет на жизнь, вызывая конфликты от эго, и тормозит отношения, не позволяя быть равным."""
 ]
 
+# ==================== ХЕНДЛЕРЫ ====================
+
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     username = message.from_user.first_name or "друг"
@@ -350,7 +352,9 @@ async def start_handler(message: Message, state: FSMContext):
 Хочешь посмотреть правду о себе и понять, где можно всё изменить? 👀"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Начать диагностику", callback_data="start_diagnostics")]
+        [InlineKeyboardButton(text="Начать диагностику", callback_data="start_diagnostics")],
+        [InlineKeyboardButton(text="О методе СОВ", callback_data="about_method")],
+        [InlineKeyboardButton(text="Условия и документы", callback_data="show_legal")]
     ])
 
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
@@ -439,20 +443,23 @@ async def ask_question(message: Message, state: FSMContext):
     index = data.get("question_index", 0)
     stage = data.get("stage", "first")
 
-    logger.info(f"ask_async def ask_question(message: Message, state: FSMContext):
-    data = await state.get_data()
-    index = data.get("question_index", 0)
-    stage = data.get("stage", "first")
-
     logger.info(f"ask_question: stage={stage}, index={index}")
 
+    # Защита от выхода за пределы
     if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
         await check_tie_breaker(message, state)
         return
 
-    if stage == "second" and index >= len(FIRST_STAGE_QUESTIONS) + len(data.get("top8", [])):
-        await finish_diagnostics(message, state)
-        return
+    if stage == "second":
+        top8 = data.get("top8", [])
+        if not top8:
+            await finish_diagnostics(message, state)
+            return
+        tie_questions = data.get("tie_questions", 0)
+        prog_index = index - len(FIRST_STAGE_QUESTIONS) - tie_questions
+        if prog_index >= len(top8) or prog_index < 0:
+            await finish_diagnostics(message, state)
+            return
 
     q_text = None
     callback_prefix = None
@@ -464,11 +471,9 @@ async def ask_question(message: Message, state: FSMContext):
         top8 = data.get("top8", [])
         tie_questions = data.get("tie_questions", 0)
         prog_index = index - len(FIRST_STAGE_QUESTIONS) - tie_questions
-        if prog_index < 0 or prog_index >= len(top8):
-            await finish_diagnostics(message, state)
-            return
         prog_name = top8[prog_index][0]
-        q_text = SECOND_STAGE_QUESTIONS[PROGRAMS.index(prog_name)]
+        prog_global_index = PROGRAMS.index(prog_name)
+        q_text = SECOND_STAGE_QUESTIONS[prog_global_index]
         callback_prefix = "second"
 
     text = f"Вопрос {index + 1}:\n\n{q_text}"
@@ -497,21 +502,32 @@ async def check_tie_breaker(message: Message, state: FSMContext):
         program_scores = list(zip(PROGRAMS, scores))
         program_scores.sort(key=lambda x: x[1], reverse=True)
         top8 = program_scores[:8]
-        await state.update_data(top8=top8, stage="second", question_index=len(FIRST_STAGE_QUESTIONS), tie_questions=0)
+        await state.update_data(
+            top8=top8,
+            stage="second",
+            question_index=len(FIRST_STAGE_QUESTIONS),
+            tie_questions=0
+        )
         await ask_question(message, state)
     else:
         tied_desc = [TIE_DESCRIPTIONS[i] for i in tied_indices]
         text = "Чтобы точнее понять, какая из этих ситуаций тебя волнует сильнее всего сейчас, выбери одну:\n\n"
         for idx, desc in enumerate(tied_desc, 1):
             text += f"{idx}. {desc}\n"
-        text += "\nНажми кнопку с номером:"
+        text += "\nНажми кнопку с номером ниже:"
 
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=str(i), callback_data=f"tie_{i}_{tied_indices[i-1]}")] for i in range(1, len(tied_desc)+1)
-        ])
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+        for idx in range(1, len(tied_desc) + 1):
+            keyboard.inline_keyboard.append([
+                InlineKeyboardButton(text=str(idx), callback_data=f"tie_{idx}_{tied_indices[idx-1]}")
+            ])
 
         await message.answer(text, reply_markup=keyboard)
-        await state.update_data(tie_candidates=tied_indices, stage="tie_breaker", tie_questions=1)
+        await state.update_data(
+            tie_candidates=tied_indices,
+            stage="tie_breaker",
+            tie_questions=1
+        )
 
 @dp.callback_query(lambda c: c.data.startswith("tie_"))
 async def process_tie_breaker(callback: CallbackQuery, state: FSMContext):
@@ -535,7 +551,7 @@ async def process_tie_breaker(callback: CallbackQuery, state: FSMContext):
         tie_questions=1
     )
 
-    await callback.message.edit_text("Спасибо! Теперь всё стало яснее. Переходим к уточняющим вопросам.")
+    await callback.message.edit_text("Спасибо! Теперь всё стало яснее. Переходим к уточняющим вопросам по топ-8 программам.")
     await ask_question(callback.message, state)
     await callback.answer()
 
@@ -604,7 +620,7 @@ async def finish_diagnostics(message: Message, state: FSMContext):
         "Я - это ты": "уже растворяет тебя в партнёре, теряя свои желания",
         "Внутренний судья": "уже строго судит ошибки и не прощает",
         "Я лучше/хуже всех": "уже вызывает перепады от чувства превосходства до ничтожности"
-    }
+   }
 
     top1_desc = program_short_desc.get(top1_name, "уже сильно влияет на твою жизнь")
 
