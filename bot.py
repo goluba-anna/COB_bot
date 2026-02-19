@@ -557,8 +557,6 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
         consent_username=callback.from_user.username
     )
     
-    # Здесь можно сохранить согласие в базу данных, если нужно
-    
     await callback.message.edit_text(
         "✅ Спасибо! Согласие подтверждено.\n\n"
         "Теперь начинаем диагностику ❤️\n\n"
@@ -570,8 +568,8 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
     await asyncio.sleep(2)
     
     # Здесь начинается диагностика
-    # В реальном коде здесь будет вызов первого вопроса
-    await start_diagnostics(message, state)
+    # ВАЖНО: используем callback.message, а не message
+    await start_diagnostics(callback.message, state)
     await callback.answer()
 
 
