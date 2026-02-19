@@ -585,6 +585,7 @@ async def ask_question(message: Message, state: FSMContext):
         if index < len(FIRST_STAGE_QUESTIONS):
             q_text = FIRST_STAGE_QUESTIONS[index]
             callback_prefix = "first"
+            logger.info(f"Первый этап: вопрос {index+1}")
         else:
             await determine_branch(message, state)
             return
@@ -601,6 +602,7 @@ async def ask_question(message: Message, state: FSMContext):
         if branch_questions_asked < len(questions):
             q_text = questions[branch_questions_asked]
             callback_prefix = "branch"
+            logger.info(f"Ветка {branch}: вопрос {branch_questions_asked+1}")
         else:
             await ask_final_questions(message, state, 0)
             return
@@ -610,6 +612,7 @@ async def ask_question(message: Message, state: FSMContext):
         if index < len(FINAL_QUESTIONS):
             q_text = FINAL_QUESTIONS[index]
             callback_prefix = "final"
+            logger.info(f"Финальный этап: вопрос {index+1}")
         else:
             await finish_diagnostics(message, state)
             return
@@ -619,7 +622,7 @@ async def ask_question(message: Message, state: FSMContext):
         await finish_diagnostics(message, state)
         return
 
-    text = f"Вопрос {index + 1}:\n\n{q_text}"
+    text = f"Вопрос {self._get_global_question_number(state, stage, index, branch_questions_asked)}:\n\n{q_text}"
 
     # Создаем клавиатуру в зависимости от типа вопроса
     if stage == "final" and index == 0:  # Первый финальный вопрос (оценка от 1 до 10)
@@ -658,6 +661,16 @@ async def ask_question(message: Message, state: FSMContext):
     await message.answer(text, reply_markup=keyboard)
 
 
+async def _get_global_question_number(state_data, stage, index, branch_questions_asked):
+    """Вспомогательная функция для отображения номера вопроса"""
+    if stage == "first":
+        return index + 1
+    elif stage == "branch":
+        return 10 + branch_questions_asked + 1
+    else:  # final
+        return 10 + 6 + index + 1
+
+
 @dp.callback_query(lambda c: c.data.startswith(("first_", "branch_", "final_", "final_option1_", "final_option2_")))
 async def process_answer(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает ответ пользователя"""
@@ -684,18 +697,21 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
         current_stage = state_data.get("stage", "first")
         branch = state_data.get("current_branch", None)
         branch_questions_asked = state_data.get("branch_questions_asked", 0)
+        question_index = state_data.get("question_index", 0)
 
-        logger.info(f"process_answer: prefix={prefix}, score={score}, index={index}, stage={current_stage}")
+        logger.info(f"process_answer: prefix={prefix}, score={score}, index={index}, stage={current_stage}, question_index={question_index}")
 
         # Обработка первого этапа - сохраняем ответы
         if prefix == "first" and current_stage == "first":
             if index < len(FIRST_STAGE_QUESTIONS):
                 first_stage_answers = state_data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
                 first_stage_answers[index] = score
-                await state.update_data(first_stage_answers=first_stage_answers)
                 # Увеличиваем индекс для первого этапа
                 new_index = index + 1
-                await state.update_data(question_index=new_index)
+                await state.update_data(
+                    first_stage_answers=first_stage_answers,
+                    question_index=new_index
+                )
                 logger.info(f"Первый этап: сохранен ответ {score} на вопрос {index}, новый индекс {new_index}")
 
         # Обработка второго этапа - добавляем баллы к программам
@@ -713,11 +729,14 @@ async def process_answer(callback: CallbackQuery, state: FSMContext):
                 scores[prog_index] += score
                 logger.info(f"Ветка {branch}: добавлено {score} баллов к программе {PROGRAMS[prog_index]}")
                 
-                # Увеличиваем счетчик вопросов ветки
+                # Увеличиваем ТОЛЬКО счетчик вопросов ветки, НЕ увеличиваем question_index
                 await state.update_data(
                     scores=scores,
                     branch_questions_asked=branch_questions_asked + 1
                 )
+                
+                # Для второго этапа question_index не меняем, он остается равным 10
+                # Это важно, чтобы ask_question понимал, что мы на втором этапе
             else:
                 logger.warning(f"Вопросов ветки больше чем программ: {branch_questions_asked} >= {len(branch_programs)}")
 
@@ -815,7 +834,7 @@ async def determine_branch(message: Message, state: FSMContext):
             current_branch=top_branches[0],
             stage="branch",
             branch_questions_asked=0,
-            question_index=10  # Начинаем второй этап после 10 вопросов
+            question_index=10  # Фиксируем индекс на 10 для второго этапа
         )
         logger.info(f"Выбрана ветка {top_branches[0]}, начинаем вопросы по ветке")
         await ask_question(message, state)
@@ -865,7 +884,7 @@ async def process_branch_tie(callback: CallbackQuery, state: FSMContext):
         current_branch=selected_branch,
         stage="branch",
         branch_questions_asked=0,
-        question_index=10,  # Начинаем второй этап после 10 вопросов
+        question_index=10,  # Фиксируем индекс на 10 для второго этапа
         tie_branches=None
     )
     
