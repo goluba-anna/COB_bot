@@ -32,8 +32,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # ==================== ID АДМИНИСТРАТОРА ====================
-# ЗАМЕНИТЕ 123456789 НА СВОЙ ID (узнать можно у @userinfobot)
-ADMIN_ID = 217336060  # <--- СЮДА ВСТАВЬТЕ СВОЙ ID
+ADMIN_ID = 217336060  # Ваш ID
 
 # ==================== ПРОВЕРКА ПЕРЕМЕННЫХ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
@@ -64,6 +63,7 @@ class Form(StatesGroup):
     
     # Состояния для выбора варианта разбора
     waiting_for_report_option = State()
+    waiting_for_email = State()
 
 # ==================== ДАННЫЕ ПРОГРАММ ====================
 
@@ -396,30 +396,22 @@ PROGRAM_DESCRIPTIONS = [
 ]
 
 # ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ВЕТКАМИ ====================
-
 def get_branch_scores(scores):
     """Подсчитывает баллы по каждой ветке"""
     branch_a_score = sum(scores[i] for i in BRANCH_A)
     branch_b_score = sum(scores[i] for i in BRANCH_B)
     branch_c_score = sum(scores[i] for i in BRANCH_C)
     branch_d_score = sum(scores[i] for i in BRANCH_D)
-    return {
-        'A': branch_a_score,
-        'B': branch_b_score,
-        'C': branch_c_score,
-        'D': branch_d_score
-    }
-
+    return {'A': branch_a_score, 'B': branch_b_score, 'C': branch_c_score, 'D': branch_d_score}
 
 def get_top_branches(branch_scores, threshold=5):
-    """Определяет лидирующие ветки. Если разница ≤ threshold - возвращает две лучшие"""
+    """Определяет лидирующие ветки"""
     sorted_branches = sorted(branch_scores.items(), key=lambda x: x[1], reverse=True)
     if len(sorted_branches) > 1 and sorted_branches[0][1] - sorted_branches[1][1] <= threshold:
         return [sorted_branches[0][0], sorted_branches[1][0]]
     return [sorted_branches[0][0]]
 
 # ==================== ОБРАБОТЧИКИ КОМАНД ====================
-
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
     """Главное меню"""
@@ -449,7 +441,6 @@ async def start_handler(message: Message, state: FSMContext):
 
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
     await state.clear()
-
 
 @dp.callback_query(lambda c: c.data == "about_method")
 async def about_method_callback(callback: CallbackQuery):
@@ -481,7 +472,6 @@ async def about_method_callback(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-
 @dp.callback_query(lambda c: c.data == "show_legal")
 async def show_legal(callback: CallbackQuery):
     """Показывает документы"""
@@ -503,7 +493,6 @@ async def show_legal(callback: CallbackQuery):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
 
-
 @dp.callback_query(lambda c: c.data == "back_to_main")
 async def back_to_main(callback: CallbackQuery, state: FSMContext):
     """Возврат в главное меню"""
@@ -511,16 +500,9 @@ async def back_to_main(callback: CallbackQuery, state: FSMContext):
     await start_handler(callback.message, state)
     await callback.answer()
 
-
 @dp.callback_query(lambda c: c.data == "start_diagnostics")
 async def start_diagnostics_callback(callback: CallbackQuery, state: FSMContext):
-    """
-    Показывает экран с условиями перед началом диагностики.
-    Этот обработчик вызывается из любого места:
-    - Из главного меню
-    - Из раздела "О методе СОВ"
-    - Из раздела с документами
-    """
+    """Экран с условиями перед началом диагностики"""
     text = """📋 <b>Подтверждение согласия</b>
 
 Перед началом диагностики нужно подтвердить, что ты ознакомился(лась) и согласен(на) с условиями:
@@ -528,8 +510,6 @@ async def start_diagnostics_callback(callback: CallbackQuery, state: FSMContext)
 ✅ Я ознакомился(лась) с <a href="https://drive.google.com/file/d/1hNsbGW4igNVqJXjl3tApcbSXrNQiX27K/view?usp=share_link">публичной офертой</a>
 ✅ Я даю согласие на <a href="https://drive.google.com/file/d/1lP5d-MCBvNpxNBV1hZSCRHByWgFz5LEP/view?usp=sharing">обработку персональных данных</a>
 ✅ Я согласен(на) получать информационные сообщения
-
-Это стандартные правила, чтобы всё было честно и безопасно. Твои данные никогда не передаются третьим лицам.
 
 <b>Подтверди своё согласие, чтобы продолжить.</b>"""
 
@@ -542,19 +522,18 @@ async def start_diagnostics_callback(callback: CallbackQuery, state: FSMContext)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML", disable_web_page_preview=True)
     await callback.answer()
 
-
 @dp.callback_query(lambda c: c.data == "confirm_consent")
 async def confirm_consent(callback: CallbackQuery, state: FSMContext):
-    """
-    Подтверждение согласия - только после этого начинается диагностика.
-    Сохраняем факт согласия в состоянии.
-    """
-    # Сохраняем, что пользователь дал согласие
+    """Подтверждение согласия - начало диагностики"""
+    # Сохраняем данные для диагностики
     await state.update_data(
         consent_given=True,
-        consent_date=datetime.now().isoformat(),
-        consent_user_id=callback.from_user.id,
-        consent_username=callback.from_user.username
+        scores=[0] * len(PROGRAMS),
+        first_stage_answers=[0] * len(FIRST_STAGE_QUESTIONS),
+        question_index=0,
+        stage="first",
+        branch_questions_asked=0,
+        start_time=datetime.now().isoformat()
     )
     
     await callback.message.edit_text(
@@ -567,481 +546,440 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
     
     await asyncio.sleep(2)
     
-    # Здесь начинается диагностика
-    # ВАЖНО: используем callback.message, а не message
-    await start_diagnostics(callback.message, state)
+    # Задаем первый вопрос
+    await ask_question(callback.message, state)
     await callback.answer()
 
-
-async def start_diagnostics(message: Message, state: FSMContext):
-    """
-    Функция начала диагностики.
-    Здесь инициализируются все необходимые данные и задается первый вопрос.
-    """
-    # Проверяем, есть ли согласие
+# ==================== ФУНКЦИИ ДЛЯ ОПРОСА ====================
+async def ask_question(message: Message, state: FSMContext):
+    """Задает следующий вопрос диагностики"""
     data = await state.get_data()
-    if not data.get("consent_given"):
-        # Если по какой-то причине согласия нет - отправляем на экран согласия
-        # (на практике сюда не должны попадать)
-        await message.answer(
-            "⚠️ Для прохождения диагностики нужно подтвердить согласие с условиями.",
-            reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="📋 Перейти к условиям", callback_data="start_diagnostics")]
-            ])
-        )
+    index = data.get("question_index", 0)
+    stage = data.get("stage", "first")
+    branch = data.get("current_branch", None)
+    branch_questions_asked = data.get("branch_questions_asked", 0)
+
+    logger.info(f"ask_question вызван: stage={stage}, index={index}, branch={branch}")
+
+    # Завершение первого этапа
+    if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
+        await determine_branch(message, state)
         return
+
+    # Завершение второго этапа
+    if stage == "branch" and branch_questions_asked >= 6:
+        await ask_final_questions(message, state, 0)
+        return
+
+    # Завершение финальных вопросов
+    if stage == "final" and index >= 3:
+        await finish_diagnostics(message, state)
+        return
+
+    q_text = None
+    callback_prefix = None
+
+    if stage == "first":
+        q_text = FIRST_STAGE_QUESTIONS[index]
+        callback_prefix = "first"
+        
+    elif stage == "branch" and branch:
+        questions = {
+            'A': BRANCH_A_QUESTIONS,
+            'B': BRANCH_B_QUESTIONS,
+            'C': BRANCH_C_QUESTIONS,
+            'D': BRANCH_D_QUESTIONS
+        }.get(branch, [])
+        
+        if branch_questions_asked < len(questions):
+            q_text = questions[branch_questions_asked]
+            callback_prefix = "branch"
+        else:
+            await ask_final_questions(message, state, 0)
+            return
+
+    elif stage == "final" and index < len(FINAL_QUESTIONS):
+        q_text = FINAL_QUESTIONS[index]
+        callback_prefix = "final"
+
+    if not q_text:
+        await finish_diagnostics(message, state)
+        return
+
+    text = f"Вопрос {index + 1}:\n\n{q_text}"
+
+    # Клавиатура для финального вопроса с оценкой
+    if stage == "final" and index == 0:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=str(i), callback_data=f"final_{i}_0") for i in range(1, 6)],
+            [InlineKeyboardButton(text=str(i), callback_data=f"final_{i}_0") for i in range(6, 11)]
+        ])
+    else:
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="1 — Совсем не про меня", callback_data=f"{callback_prefix}_1_{index}")],
+            [InlineKeyboardButton(text="2 — Скорее не про меня", callback_data=f"{callback_prefix}_2_{index}")],
+            [InlineKeyboardButton(text="3 — Нейтрально", callback_data=f"{callback_prefix}_3_{index}")],
+            [InlineKeyboardButton(text="4 — Скорее про меня", callback_data=f"{callback_prefix}_4_{index}")],
+            [InlineKeyboardButton(text="5 — Точно про меня", callback_data=f"{callback_prefix}_5_{index}")]
+        ])
+
+    await message.answer(text, reply_markup=keyboard)
+
+@dp.callback_query(lambda c: c.data.startswith(("first_", "branch_", "final_")))
+async def process_answer(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает ответ пользователя"""
+    parts = callback.data.split("_")
+    prefix = parts[0]
+    score = int(parts[1])
+    index = int(parts[2])
+
+    data = await state.get_data()
+    scores = data.get("scores", [0] * len(PROGRAMS))
+    current_stage = data.get("stage", "first")
+    branch = data.get("current_branch", None)
+    branch_questions_asked = data.get("branch_questions_asked", 0)
+
+    # Обработка первого этапа
+    if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
+        first_stage_answers = data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
+        first_stage_answers[index] = score
+        await state.update_data(first_stage_answers=first_stage_answers, question_index=index + 1)
+
+    # Обработка вопросов по веткам
+    elif prefix == "branch" and current_stage == "branch" and branch:
+        branch_programs = {'A': BRANCH_A, 'B': BRANCH_B, 'C': BRANCH_C, 'D': BRANCH_D}.get(branch, [])
+        if branch_questions_asked < len(branch_programs):
+            prog_index = branch_programs[branch_questions_asked]
+            scores[prog_index] += score
+            await state.update_data(
+                scores=scores,
+                branch_questions_asked=branch_questions_asked + 1
+            )
+
+    # Обработка финальных вопросов
+    elif prefix == "final" and current_stage == "final":
+        final_answers = data.get("final_answers", {})
+        final_answers[f"q{index}"] = score
+        await state.update_data(final_answers=final_answers, question_index=index + 1)
+
+    await ask_question(callback.message, state)
+    await callback.answer()
+
+async def determine_branch(message: Message, state: FSMContext):
+    """Определяет основную ветку после первых вопросов"""
+    data = await state.get_data()
+    first_stage_answers = data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
+    scores = [0] * len(PROGRAMS)
     
-    # Инициализируем данные для диагностики
+    # Распределяем баллы по веткам
+    for i in range(min(4, len(first_stage_answers))):
+        for prog_idx in BRANCH_A:
+            scores[prog_idx] += first_stage_answers[i] * 2
+    for i in range(4, min(8, len(first_stage_answers))):
+        for prog_idx in BRANCH_B:
+            scores[prog_idx] += first_stage_answers[i] * 2
+    for i in range(8, min(12, len(first_stage_answers))):
+        for prog_idx in BRANCH_C:
+            scores[prog_idx] += first_stage_answers[i] * 2
+    for i in range(12, min(16, len(first_stage_answers))):
+        for prog_idx in BRANCH_D:
+            scores[prog_idx] += first_stage_answers[i] * 2
+    for i in range(16, len(first_stage_answers)):
+        for prog_idx in range(len(PROGRAMS)):
+            scores[prog_idx] += first_stage_answers[i]
+    
+    await state.update_data(scores=scores)
+    branch_scores = get_branch_scores(scores)
+    top_branches = get_top_branches(branch_scores)
+    
+    if len(top_branches) == 1:
+        await state.update_data(
+            current_branch=top_branches[0],
+            stage="branch",
+            branch_questions_asked=0,
+            question_index=18
+        )
+        await ask_question(message, state)
+    else:
+        branch_pair = "_".join(sorted(top_branches))
+        tie_question = BRANCH_TIE_QUESTIONS.get(branch_pair)
+        
+        if tie_question:
+            await state.update_data(tie_branches=top_branches, stage="branch_tie")
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Вариант 1", callback_data="tie_branch_1")],
+                [InlineKeyboardButton(text="Вариант 2", callback_data="tie_branch_2")]
+            ])
+            await message.answer(f"Чтобы точнее понять твою ситуацию:\n\n{tie_question}", reply_markup=keyboard)
+        else:
+            await state.update_data(
+                current_branch=top_branches[0],
+                stage="branch",
+                branch_questions_asked=0,
+                question_index=18
+            )
+            await ask_question(message, state)
+
+@dp.callback_query(lambda c: c.data.startswith("tie_branch_"))
+async def process_branch_tie(callback: CallbackQuery, state: FSMContext):
+    """Обрабатывает ответ на вопрос-разрешитель"""
+    choice = callback.data.split("_")[2]
+    data = await state.get_data()
+    tie_branches = data.get("tie_branches", ['A', 'B'])
+    
+    selected_branch = tie_branches[0] if choice == "1" else tie_branches[1]
     await state.update_data(
-        scores=[0] * len(PROGRAMS),
-        question_index=0,
-        stage="diagnostics",
-        start_time=datetime.now().isoformat()
+        current_branch=selected_branch,
+        stage="branch",
+        branch_questions_asked=0,
+        question_index=18
     )
     
-    # Здесь задается первый вопрос
-    # В реальном коде будет вызов ask_question
-    await message.answer("🔍 Вопрос 1: (здесь будет ваш первый вопрос)")
+    await callback.message.edit_text("Спасибо! Продолжим с уточняющими вопросами.")
+    await asyncio.sleep(1)
+    await ask_question(callback.message, state)
+    await callback.answer()
 
+async def ask_final_questions(message: Message, state: FSMContext, question_index: int):
+    """Переход к финальным вопросам"""
+    await state.update_data(stage="final", question_index=question_index)
+    await ask_question(message, state)
 
-# ==================== ОБРАБОТЧИКИ ЗАПИСИ ====================
+async def finish_diagnostics(message: Message, state: FSMContext):
+    """Завершение диагностики и показ результатов"""
+    data = await state.get_data()
+    scores = data.get("scores", [0] * len(PROGRAMS))
 
+    program_scores = list(zip(PROGRAMS, scores, range(len(PROGRAMS))))
+    program_scores.sort(key=lambda x: x[1], reverse=True)
+    top3 = program_scores[:3]
+
+    text_top = f"""✨ <b>Диагностика завершена!</b> ✨
+
+Твои топ-3 программы:
+
+1️⃣ <b>{top3[0][0]}</b> — {top3[0][1]} баллов
+2️⃣ <b>{top3[1][0]}</b> — {top3[1][1]} баллов
+3️⃣ <b>{top3[2][0]}</b> — {top3[2][1]} баллов
+
+📌 Сейчас я пришлю подробные описания всех трёх программ."""
+
+    await message.answer(text_top, parse_mode="HTML")
+
+    for i, (prog, score, prog_idx) in enumerate(top3, 1):
+        desc = PROGRAM_DESCRIPTIONS[prog_idx]
+        await message.answer(f"<b>{i}. {prog}</b>\n\n{desc}", parse_mode="HTML")
+        await asyncio.sleep(0.8)
+
+    text_offer = """Ты узнал(а) себя в этих описаниях?
+
+<b>Если хочешь пойти глубже:</b>
+
+📄 <b>Полный разбор в файле</b>:
+   • Топ-1 программа — 399₽
+   • Топ-2 программы — 599₽  
+   • Топ-3 программы — 799₽
+
+🎯 <b>Мини-разбор (30–40 минут) — 1000₽</b>
+💫 <b>Консультация (60–90 минут) — предоплата 1000₽</b>"""
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📄 Получить разбор", callback_data="choose_report")],
+        [InlineKeyboardButton(text="🎯 Мини-разбор", callback_data="book_mini")],
+        [InlineKeyboardButton(text="💫 Консультация", callback_data="book_consult")],
+        [InlineKeyboardButton(text="🔄 Пройти ещё раз", callback_data="restart")]
+    ])
+
+    await message.answer(text_offer, reply_markup=keyboard, parse_mode="HTML")
+    await state.clear()
+
+@dp.callback_query(lambda c: c.data == "restart")
+async def restart_callback(callback: CallbackQuery, state: FSMContext):
+    """Перезапуск диагностики"""
+    await state.clear()
+    await start_handler(callback.message, state)
+    await callback.answer()
+
+# ==================== ОБРАБОТЧИКИ ЗАПИСИ И ОПЛАТЫ ====================
 @dp.callback_query(lambda c: c.data == "book_consult")
 async def book_consult_callback(callback: CallbackQuery, state: FSMContext):
-    """Запись на консультацию"""
-    await state.update_data(
-        service_type="consult",
-        service_name="Консультация",
-        service_price=1000,  # предоплата
-        prepaid_only=False
-    )
-    
-    text = """💫 <b>Запись на консультацию</b>
-
-<b>Формат:</b> онлайн (видеозвонок)
-
-<b>Условия:</b>
-• Предоплата 1000₽ (не возвращается при отмене менее чем за 24 часа)
-• Оставшаяся сумма — 5000₽ — оплачивается после консультации
-• Длительность: 60–90 минут
-
-<b>Что нужно сделать:</b>
-1. Напиши своё имя
-2. Укажи телефон для связи
-3. Выбери дату и время 
-4. Внеси предоплату
-5. Я подтвержу запись
-
-Напиши, пожалуйста, своё имя:"""
-
+    await state.update_data(service_type="consult", service_name="Консультация", service_price=1000, prepaid_only=False)
     await state.set_state(Form.waiting_for_name)
-    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.edit_text(
+        "💫 <b>Запись на консультацию</b>\n\nНапиши своё имя:",
+        parse_mode="HTML"
+    )
     await callback.answer()
-
 
 @dp.callback_query(lambda c: c.data == "book_mini")
 async def book_mini_callback(callback: CallbackQuery, state: FSMContext):
-    """Запись на мини-разбор"""
-    await state.update_data(
-        service_type="mini",
-        service_name="Мини-разбор",
-        service_price=1000,  # полная стоимость
-        prepaid_only=True
-    )
-    
-    text = """🎯 <b>Запись на мини-разбор</b>
-
-<b>Формат:</b> онлайн (видеозвонок)
-
-Мини-разбор — это 30–40 минут личного разговора, где мы разберём одну конкретную ситуацию, которая тебя беспокоит.
-
-<b>Что нужно сделать:</b>
-1. Напиши своё имя
-2. Укажи телефон для связи
-3. Выбери дату и время 
-4. Внеси оплату 1000₽
-5. Я подтвержу запись
-
-Напиши, пожалуйста, своё имя:"""
-
+    await state.update_data(service_type="mini", service_name="Мини-разбор", service_price=1000, prepaid_only=True)
     await state.set_state(Form.waiting_for_name)
-    await callback.message.edit_text(text, parse_mode="HTML")
+    await callback.message.edit_text(
+        "🎯 <b>Запись на мини-разбор</b>\n\nНапиши своё имя:",
+        parse_mode="HTML"
+    )
     await callback.answer()
-
 
 @dp.message(Form.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
-    """Обрабатывает ввод имени"""
     name = message.text.strip()
-    
     if len(name) < 2:
         await message.answer("Имя должно содержать хотя бы 2 символа. Попробуй ещё раз:")
         return
-    
     await state.update_data(client_name=name)
     await state.set_state(Form.waiting_for_phone)
-    
-    await message.answer(f"Приятно познакомиться, {name}! ❤️\n\nТеперь напиши свой номер телефона для связи (например: +7 999 123-45-67):")
-
+    await message.answer("Теперь напиши номер телефона для связи (например: +7 999 123-45-67):")
 
 @dp.message(Form.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
-    """Обрабатывает ввод телефона"""
     phone = message.text.strip()
-    
-    # Простая валидация номера телефона
     phone_pattern = re.compile(r'^(\+7|8)?[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}$')
-    
     if not phone_pattern.match(phone.replace(' ', '').replace('-', '')):
-        await message.answer("Пожалуйста, введи корректный номер телефона (например: +7 999 123-45-67):")
+        await message.answer("Пожалуйста, введи корректный номер телефона:")
         return
-    
     await state.update_data(client_phone=phone)
     await state.set_state(Form.waiting_for_date)
-    
-    # Показываем календарь для выбора даты
-    await message.answer(
-        "📅 Теперь выбери удобную дату:",
-        reply_markup=await SimpleCalendar().start_calendar()
-    )
-
+    await message.answer("📅 Выбери удобную дату:", reply_markup=await SimpleCalendar().start_calendar())
 
 @dp.callback_query(SimpleCalendarCallback.filter(), Form.waiting_for_date)
 async def process_date(callback: CallbackQuery, callback_data: SimpleCalendarCallback, state: FSMContext):
-    """Обрабатывает выбор даты в календаре"""
     calendar = SimpleCalendar()
     selected, date = await calendar.process_selection(callback, callback_data)
-    
     if selected:
-        # Проверяем, что дата не в прошлом
         if date.date() < datetime.now().date():
-            await callback.message.answer("❌ Нельзя выбрать дату в прошлом. Пожалуйста, выбери другую дату:")
-            await callback.message.answer(
-                "📅 Выбери дату:",
-                reply_markup=await SimpleCalendar().start_calendar()
-            )
+            await callback.message.answer("❌ Нельзя выбрать дату в прошлом.")
+            await callback.message.answer("📅 Выбери дату:", reply_markup=await SimpleCalendar().start_calendar())
             await callback.answer()
             return
         
-        # Проверяем, что дата не слишком далеко (максимум 3 месяца)
-        if date.date() > (datetime.now() + timedelta(days=90)).date():
-            await callback.message.answer("❌ Можно записаться максимум на 3 месяца вперёд. Пожалуйста, выбери другую дату:")
-            await callback.message.answer(
-                "📅 Выбери дату:",
-                reply_markup=await SimpleCalendar().start_calendar()
-            )
-            await callback.answer()
-            return
-        
-        # Сохраняем выбранную дату
         await state.update_data(consult_date=date.strftime("%d.%m.%Y"))
         await state.set_state(Form.waiting_for_time)
         
-        # Определяем шаг времени в зависимости от типа услуги
         data = await state.get_data()
         service_type = data.get("service_type")
         
-        if service_type == "mini":
-            # Для мини-разбора шаг 1 час
-            time_slots = [
-                ["11:00", "12:00", "13:00"],
-                ["14:00", "15:00", "16:00"],
-                ["17:00", "18:00"]
-            ]
-            time_text = "с шагом 1 час"
-        else:
-            # Для консультации шаг 2 часа
-            time_slots = [
-                ["11:00", "13:00", "15:00"],
-                ["17:00"]
-            ]
-            time_text = "с шагом 2 часа"
+        time_slots = {
+            "mini": [["11:00", "12:00", "13:00"], ["14:00", "15:00", "16:00"], ["17:00", "18:00"]],
+            "consult": [["11:00", "13:00", "15:00"], ["17:00"]]
+        }.get(service_type, [["11:00", "13:00", "15:00"], ["17:00"]])
         
-        text = f"✅ Выбрана дата: {date.strftime('%d.%m.%Y')}\n\n"
-        text += f"🕐 Теперь выбери удобное время (МСК, {time_text}):"
-        
-        # Создаем клавиатуру с вариантами времени
+        text = f"✅ Дата: {date.strftime('%d.%m.%Y')}\n\n🕐 Выбери время:"
         time_keyboard = InlineKeyboardMarkup(inline_keyboard=[])
         
         for row in time_slots:
-            row_buttons = []
-            for time in row:
-                time_code = time.replace(":", "")
-                row_buttons.append(InlineKeyboardButton(text=time, callback_data=f"time_{time_code}"))
+            row_buttons = [InlineKeyboardButton(text=t, callback_data=f"time_{t.replace(':', '')}") for t in row]
             time_keyboard.inline_keyboard.append(row_buttons)
         
-        # Добавляем кнопку "Назад"
-        time_keyboard.inline_keyboard.append([
-            InlineKeyboardButton(text="◀️ Назад к выбору даты", callback_data="back_to_date")
-        ])
-        
+        time_keyboard.inline_keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_date")])
         await callback.message.edit_text(text, reply_markup=time_keyboard)
-    
     await callback.answer()
-
 
 @dp.callback_query(lambda c: c.data == "back_to_date", Form.waiting_for_time)
 async def back_to_date(callback: CallbackQuery, state: FSMContext):
-    """Возврат к выбору даты"""
     await state.set_state(Form.waiting_for_date)
-    await callback.message.edit_text(
-        "📅 Выбери удобную дату:",
-        reply_markup=await SimpleCalendar().start_calendar()
-    )
+    await callback.message.edit_text("📅 Выбери дату:", reply_markup=await SimpleCalendar().start_calendar())
     await callback.answer()
-
 
 @dp.callback_query(lambda c: c.data.startswith("time_"), Form.waiting_for_time)
 async def process_time(callback: CallbackQuery, state: FSMContext):
-    """Обрабатывает выбор времени"""
     time_code = callback.data.split("_")[1]
     selected_time = f"{time_code[:2]}:{time_code[2:]}" if len(time_code) == 4 else f"{time_code[:2]}:00"
     
     data = await state.get_data()
-    service_type = data.get("service_type")
-    service_name = data.get("service_name")
-    service_price = data.get("service_price")
-    client_name = data.get("client_name")
-    client_phone = data.get("client_phone")
-    consult_date = data.get("consult_date")
-    prepaid_only = data.get("prepaid_only", False)
-    
-    # Сохраняем выбранное время
-    await state.update_data(consult_time=selected_time)
-    
-    # Показываем подтверждение
     text = f"""✅ <b>Данные для записи:</b>
 
-👤 Имя: {client_name}
-📞 Телефон: {client_phone}
-📅 Дата: {consult_date}
+👤 Имя: {data.get('client_name')}
+📞 Телефон: {data.get('client_phone')}
+📅 Дата: {data.get('consult_date')}
 🕐 Время: {selected_time} МСК
-🎯 Услуга: {service_name}
+🎯 Услуга: {data.get('service_name')}
 
-"""
-    
-    if prepaid_only:
-        text += f"💰 Сумма к оплате: {service_price}₽ (полная стоимость)"
-    else:
-        text += f"""💰 Предоплата: {service_price}₽ (невозвратная при отмене менее чем за 24 часа)
-💵 Оставшаяся сумма: 5000₽ — оплачивается после консультации"""
-    
-    text += "\n\nВсё верно?"
+{'' if data.get('prepaid_only') else '💰 Предоплата: 1000₽'}
+
+Всё верно?"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Да, всё верно, перейти к оплате", callback_data="proceed_to_payment")],
-        [InlineKeyboardButton(text="🔄 Изменить данные", callback_data="back_to_booking_start")],
-        [InlineKeyboardButton(text="◀️ В главное меню", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="✅ Перейти к оплате", callback_data="proceed_to_payment")],
+        [InlineKeyboardButton(text="🔄 Изменить", callback_data="back_to_booking_start")],
+        [InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")]
     ])
 
+    await state.update_data(consult_time=selected_time)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-
 @dp.callback_query(lambda c: c.data == "back_to_booking_start")
 async def back_to_booking_start(callback: CallbackQuery, state: FSMContext):
-    """Возврат к началу записи"""
     data = await state.get_data()
-    service_type = data.get("service_type")
-    
-    if service_type == "mini":
+    if data.get("service_type") == "mini":
         await book_mini_callback(callback, state)
     else:
         await book_consult_callback(callback, state)
 
-
 @dp.callback_query(lambda c: c.data == "proceed_to_payment")
 async def proceed_to_payment(callback: CallbackQuery, state: FSMContext):
-    """Переходит к оплате"""
     if not PAYMENTS_TOKEN:
-        await callback.message.answer(
-            "❌ К сожалению, оплата временно недоступна. Пожалуйста, попробуй позже или свяжись с администратором."
-        )
+        await callback.message.answer("❌ Оплата временно недоступна.")
         await callback.answer()
         return
     
     data = await state.get_data()
-    service_price = data.get("service_price", 1000)
-    service_name = data.get("service_name", "Услуга")
-    client_name = data.get("client_name", "")
-    prepaid_only = data.get("prepaid_only", False)
-    
-    # Создаем уникальный идентификатор платежа
     payment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
     await state.update_data(payment_id=payment_id)
     
-    # Создаем счет для оплаты
-    PRICE = LabeledPrice(label=service_name, amount=service_price * 100)  # в копейках
-    
-    description = f"Запись на {service_name.lower()}"
-    if not prepaid_only:
-        description += " (предоплата)"
+    price = data.get("service_price", 1000)
+    name = data.get("service_name", "Услуга")
     
     await bot.send_invoice(
         chat_id=callback.message.chat.id,
-        title=service_name,
-        description=description,
+        title=name,
+        description=f"Запись на {name.lower()}",
         payload=payment_id,
         provider_token=PAYMENTS_TOKEN,
         currency="rub",
-        prices=[PRICE],
-        start_parameter="booking",
-        photo_url="https://via.placeholder.com/150",
-        photo_height=150,
-        photo_width=150,
-        photo_size=150,
-        need_name=False,
-        need_phone_number=False,
-        need_email=False,
-        need_shipping_address=False,
-        is_flexible=False,
-        disable_notification=False
+        prices=[LabeledPrice(label=name, amount=price * 100)],
+        start_parameter="booking"
     )
     
     await state.set_state(Form.waiting_for_payment)
     await callback.answer()
 
-
 @dp.pre_checkout_query()
 async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery, state: FSMContext):
-    """Обработка предварительной проверки платежа"""
     await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
-
 
 @dp.message(lambda message: message.successful_payment is not None)
 async def successful_payment_handler(message: Message, state: FSMContext):
-    """Обработка успешного платежа"""
     payment_info = message.successful_payment
     data = await state.get_data()
     
-    # Получаем данные клиента
     client_name = data.get("client_name", "Не указано")
-    client_phone = data.get("client_phone", "Не указано")
-    consult_date = data.get("consult_date", "Не указана")
-    consult_time = data.get("consult_time", "Не указано")
-    service_type = data.get("service_type", "unknown")
     service_name = data.get("service_name", "Услуга")
-    prepaid_only = data.get("prepaid_only", False)
-    
     amount = payment_info.total_amount / 100
     
-    if service_type == "report":
-        # Для разбора в файле
-        report_type = data.get("report_type", "1")
-        
-        client_text = f"""✅ <b>Оплата прошла успешно!</b>
-
-Спасибо за доверие, {client_name}! ❤️
-
-Ты приобрел(а): {service_name}
-💰 Сумма: {amount}₽
-
-Файл с разбором придёт на указанную почту в течение 5-10 минут.
-
-Если письмо не пришло — проверь папку «Спам» или напиши мне."""
-        
-        await message.answer(client_text, parse_mode="HTML")
-        
-        # Уведомление администратору
-        admin_text = f"""💰 <b>Новая оплата (разбор)!</b>
-
-👤 Клиент: {client_name}
-📞 Телефон: {client_phone}
-🎯 Услуга: {service_name}
-💵 Сумма: {amount}₽
-🆔 Payment ID: {payment_info.provider_payment_charge_id}
-
-<b>Нужно отправить файл клиенту!</b>"""
-        
-    else:
-        # Для консультаций и мини-разборов
-        if prepaid_only:
-            # Мини-разбор (полная оплата)
-            client_text = f"""✅ <b>Оплата прошла успешно!</b>
-
-Спасибо за доверие, {client_name}! ❤️
-
-Твоя запись:
-📅 Дата: {consult_date}
-🕐 Время: {consult_time} МСК
-🎯 Услуга: {service_name}
-💰 Сумма: {amount}₽
-
-Я подтвержу запись в ближайшее время и напишу тебе с деталями.
-
-Если появятся вопросы — пиши!"""
-            
-            # Уведомление администратору
-            admin_text = f"""💰 <b>Новая оплата (мини-разбор)!</b>
-
-👤 Клиент: {client_name}
-📞 Телефон: {client_phone}
-📅 Дата: {consult_date}
-🕐 Время: {consult_time} МСК
-🎯 Услуга: {service_name}
-💵 Сумма: {amount}₽
-🆔 Payment ID: {payment_info.provider_payment_charge_id}
-
-<b>Нужно подтвердить запись и связаться с клиентом!</b>"""
-            
-        else:
-            # Консультация (предоплата)
-            client_text = f"""✅ <b>Предоплата прошла успешно!</b>
-
-Спасибо за доверие, {client_name}! ❤️
-
-Твоя предварительная запись:
-📅 Дата: {consult_date}
-🕐 Время: {consult_time} МСК
-🎯 Услуга: {service_name}
-💰 Предоплата: {amount}₽
-
-Я подтвержу запись в ближайшее время и напишу тебе с деталями.
-
-Если появятся вопросы — пиши!"""
-            
-            # Уведомление администратору
-            admin_text = f"""💰 <b>Новая предоплата (консультация)!</b>
-
-👤 Клиент: {client_name}
-📞 Телефон: {client_phone}
-📅 Дата: {consult_date}
-🕐 Время: {consult_time} МСК
-🎯 Услуга: {service_name}
-💵 Предоплата: {amount}₽
-🆔 Payment ID: {payment_info.provider_payment_charge_id}
-
-<b>Нужно подтвердить запись, связаться с клиентом!</b>"""
-        
-        await message.answer(client_text, parse_mode="HTML")
+    await message.answer(f"✅ Оплата прошла! Спасибо, {client_name}! ❤️")
+    
+    admin_text = f"""💰 Новая оплата!
+👤 {client_name}
+🎯 {service_name}
+💵 {amount}₽"""
     
     try:
-        await bot.send_message(ADMIN_ID, admin_text, parse_mode="HTML")
-        logger.info(f"Уведомление администратору отправлено")
-    except Exception as e:
-        logger.error(f"Не удалось отправить уведомление администратору: {e}")
+        await bot.send_message(ADMIN_ID, admin_text)
+    except:
+        pass
     
-    # Возвращаемся в главное меню
     await state.clear()
     await start_handler(message, state)
 
-
 @dp.callback_query(lambda c: c.data == "choose_report")
 async def choose_report_callback(callback: CallbackQuery, state: FSMContext):
-    """Выбор варианта разбора"""
-    text = """📄 <b>Выбери вариант полного разбора:</b>
+    text = """📄 <b>Выбери вариант разбора:</b>
 
-<b>Что ты получишь в любом варианте:</b>
-• Подробное описание каждой программы
-• Откуда она взялась (связь с детскими ситуациями)
-• Как именно она влияет на твои отношения, деньги и самооценку
-• Что ты можешь делать уже сейчас, чтобы постепенно её менять
-
-<b>Выбери объём:</b>
-
-• <b>Топ-1 программа — 399₽</b>
-• <b>Топ-2 программы — 599₽</b>  
-• <b>Топ-3 программы — 799₽</b>"""
+• Топ-1 — 399₽
+• Топ-2 — 599₽
+• Топ-3 — 799₽"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="📄 Топ-1 — 399₽", callback_data="report_1")],
@@ -1053,47 +991,27 @@ async def choose_report_callback(callback: CallbackQuery, state: FSMContext):
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-
 @dp.callback_query(lambda c: c.data.startswith("report_"))
 async def process_report_choice(callback: CallbackQuery, state: FSMContext):
-    """Обрабатывает выбор варианта разбора"""
     report_type = callback.data.split("_")[1]
-    
-    prices = {
-        "1": 399,
-        "2": 599,
-        "3": 799
-    }
-    
-    descriptions = {
-        "1": "Полный разбор топ-1 программы",
-        "2": "Полный разбор топ-2 программ",
-        "3": "Полный разбор топ-3 программ"
-    }
-    
-    price = prices.get(report_type, 399)
-    description = descriptions.get(report_type, "Полный разбор")
+    prices = {"1": 399, "2": 599, "3": 799}
+    descriptions = {"1": "Топ-1", "2": "Топ-2", "3": "Топ-3"}
     
     await state.update_data(
         service_type="report",
         report_type=report_type,
-        service_price=price,
-        service_name=description
+        service_price=prices[report_type],
+        service_name=f"Разбор {descriptions[report_type]}"
     )
     
-    # Запрашиваем email для отправки файла
     await state.set_state(Form.waiting_for_email)
     await callback.message.edit_text(
-        f"✅ Выбран вариант: {description}\n\n"
-        f"💰 Сумма к оплате: {price}₽\n\n"
-        "Для отправки файла укажи свой email:",
+        f"✅ Выбрано: {descriptions[report_type]}\n\n💰 {prices[report_type]}₽\n\nУкажи email для отправки файла:",
         parse_mode="HTML"
     )
     await callback.answer()
 
-
 # ==================== WEBHOOK ====================
-
 async def on_startup(bot: Bot):
     try:
         webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
@@ -1106,14 +1024,12 @@ async def on_startup(bot: Bot):
     except Exception as e:
         logger.error(f"Ошибка установки webhook: {e}")
 
-
 async def on_shutdown(bot: Bot):
     try:
         await bot.delete_webhook(drop_pending_updates=True)
         logger.info("Webhook удалён")
     except Exception as e:
         logger.error(f"Ошибка удаления webhook: {e}")
-
 
 async def main():
     dp.startup.register(on_startup)
@@ -1136,13 +1052,8 @@ async def main():
     logger.info("Сервер запущен и ожидает обновлений")
     await asyncio.Event().wait()
 
-
 if __name__ == "__main__":
     try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
-        raise
         asyncio.run(main())
     except Exception as e:
         logger.error(f"Критическая ошибка: {e}")
