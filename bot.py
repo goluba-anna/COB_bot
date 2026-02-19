@@ -66,7 +66,6 @@ class Form(StatesGroup):
     waiting_for_email = State()
 
 # ==================== ДАННЫЕ ПРОГРАММ ====================
-
 PROGRAMS = [
     "Вечная пустота",
     "Меня оставят",
@@ -96,7 +95,7 @@ BRANCH_D = [3, 11, 14, 15]  # Жертва ради других, Саботаж
 
 # ==================== ВОПРОСЫ ====================
 
-# Первые 18 общих вопросов
+# Первые 10 общих вопросов
 FIRST_STAGE_QUESTIONS = [
     "Когда близкий человек долго не отвечает на сообщение — я сразу начинаю переживать, что он ко мне охладел или нашёл кого-то лучше.",
     "Бывает, что внешне всё нормально, а внутри — пусто и грустно, как будто чего-то очень важного не хватает.",
@@ -105,17 +104,9 @@ FIRST_STAGE_QUESTIONS = [
     "Когда я сажусь отдохнуть или посмотреть фильм — через 5 минут начинаю думать: «может, лучше сделать что-то полезное».",
     "В большинстве ситуаций я первым делом замечаю, что может пойти не так.",
     "Когда меня просят о помощи — я соглашаюсь, даже если у меня были свои планы, а потом сижу и думаю: «зачем я опять согласился(ась)?»",
-    "Бывает, что внутри всё болит и хочется выговориться, но когда кто-то спрашивает «как дела?» — я автоматически улыбаюсь и говорю: «всё отлично».",
+    "Когда хочется рассказать о чём-то личном или наболевшем — я вдруг начинаю говорить: «да всё нормально», хотя внутри не нормально.",
     "Даже когда всё идёт хорошо — я часто думаю: «это ненадолго, скоро опять всё испортится».",
-    "Я часто говорю «да» или соглашаюсь с другими, хотя внутри хочется сказать «нет» или поспорить.",
-    "Я часто чувствую, что мои достижения никто не замечает и не ценит.",
-    "Мне трудно просить о помощи, даже когда она действительно нужна.",
-    "Я часто сравниваю себя с другими и это сравнение обычно не в мою пользу.",
-    "Мне кажется, что я должен(на) быть идеальным(ой) во всём, что делаю.",
-    "Я часто беру на себя ответственность за чужие ошибки.",
-    "Мне трудно принимать комплименты — я сразу начинаю смущаться и отрицать.",
-    "Я часто думаю, что другие люди живут легче и проще, чем я.",
-    "Мне трудно расслабиться и получать удовольствие от жизни."
+    "Я часто говорю «да» или соглашаюсь с другими, хотя внутри хочется сказать «нет» или поспорить."
 ]
 
 # Вопросы для ветки A (Страх потери и недоверие)
@@ -134,7 +125,7 @@ BRANCH_B_QUESTIONS = [
     "Когда меня хвалят — внутри появляется лёгкий стыд и мысль: «они просто не знают, какой я на самом деле».",
     "Любое замечание или критика — даже мелкая — ранит очень сильно и сидит в голове долго.",
     "Я часто ловлю себя на том, что подстраиваюсь под людей, даже когда хочется быть собой — лишь бы никто не обиделся.",
-    "Когда хочется рассказать о чём-то личном или наболевшем — я вдруг начинаю говорить: «да всё нормально», хотя внутри не нормально.",
+    "Бывает, что внутри всё болит и хочется выговориться, но когда кто-то спрашивает «как дела?» — я автоматически улыбаюсь и говорю: «всё отлично».",
     "В глубине души я часто чувствую, что у всех людей есть какой-то важный код доступа к жизни, а мне его не выдали."
 ]
 
@@ -170,9 +161,14 @@ BRANCH_TIE_QUESTIONS = {
 
 # Финальные вопросы
 FINAL_QUESTIONS = [
-    "Насколько сильно эти чувства и мысли сейчас мешают тебе жить? (от 1 до 10, где 1 — совсем не мешают, 10 — очень сильно мешают)",
+    "Насколько сильно эти чувства и мысли сейчас мешают тебе жить? (1–10)",
     "Как часто они приходят в голову в обычной жизни?",
     "В какой сфере они сейчас проявляются сильнее всего?"
+]
+
+FINAL_OPTIONS = [
+    ["Постоянно, каждый день", "Несколько раз в неделю", "Время от времени", "Редко"],
+    ["Отношения", "Деньги и карьера", "Самооценка", "Здоровье", "Другое"]
 ]
 
 # ==================== ОПИСАНИЯ ПРОГРАММ ====================
@@ -405,7 +401,7 @@ def get_branch_scores(scores):
     return {'A': branch_a_score, 'B': branch_b_score, 'C': branch_c_score, 'D': branch_d_score}
 
 def get_top_branches(branch_scores, threshold=5):
-    """Определяет лидирующие ветки"""
+    """Определяет лидирующие ветки. Если разница ≤ threshold - возвращает две лучшие"""
     sorted_branches = sorted(branch_scores.items(), key=lambda x: x[1], reverse=True)
     if len(sorted_branches) > 1 and sorted_branches[0][1] - sorted_branches[1][1] <= threshold:
         return [sorted_branches[0][0], sorted_branches[1][0]]
@@ -533,6 +529,7 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
         question_index=0,
         stage="first",
         branch_questions_asked=0,
+        final_answers={},
         start_time=datetime.now().isoformat()
     )
     
@@ -541,7 +538,7 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
         "Теперь начинаем диагностику ❤️\n\n"
         "Я буду задавать вопросы, а ты просто отвечай. Здесь нет правильных или неправильных ответов — "
         "просто первое, что приходит в голову.\n\n"
-        "Всего будет около 20-24 вопросов."
+        "Всего будет около 20 вопросов."
     )
     
     await asyncio.sleep(2)
@@ -550,7 +547,8 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
     await ask_question(callback.message, state)
     await callback.answer()
 
-# ==================== ФУНКЦИИ ДЛЯ ОПРОСА ====================
+# ==================== ОСНОВНАЯ ЛОГИКА ОПРОСА ====================
+
 async def ask_question(message: Message, state: FSMContext):
     """Задает следующий вопрос диагностики"""
     data = await state.get_data()
@@ -559,30 +557,39 @@ async def ask_question(message: Message, state: FSMContext):
     branch = data.get("current_branch", None)
     branch_questions_asked = data.get("branch_questions_asked", 0)
 
-    logger.info(f"ask_question вызван: stage={stage}, index={index}, branch={branch}")
+    logger.info(f"ask_question: stage={stage}, index={index}, branch={branch}, branch_questions={branch_questions_asked}")
 
-    # Завершение первого этапа
+    # Завершение первого этапа (после 10 вопросов) - переход к определению ветки
     if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
+        logger.info("Первый этап завершен, определяем ветку")
         await determine_branch(message, state)
         return
 
-    # Завершение второго этапа
+    # Завершение второго этапа (после 6 вопросов по ветке) - переход к финальным вопросам
     if stage == "branch" and branch_questions_asked >= 6:
+        logger.info("Второй этап завершен, переходим к финальным вопросам")
         await ask_final_questions(message, state, 0)
         return
 
-    # Завершение финальных вопросов
+    # Завершение финальных вопросов (после 3 вопросов)
     if stage == "final" and index >= 3:
+        logger.info("Финальные вопросы завершены, показываем результаты")
         await finish_diagnostics(message, state)
         return
 
     q_text = None
     callback_prefix = None
 
+    # Первый этап - общие вопросы
     if stage == "first":
-        q_text = FIRST_STAGE_QUESTIONS[index]
-        callback_prefix = "first"
+        if index < len(FIRST_STAGE_QUESTIONS):
+            q_text = FIRST_STAGE_QUESTIONS[index]
+            callback_prefix = "first"
+        else:
+            await determine_branch(message, state)
+            return
         
+    # Второй этап - вопросы по выбранной ветке
     elif stage == "branch" and branch:
         questions = {
             'A': BRANCH_A_QUESTIONS,
@@ -598,23 +605,48 @@ async def ask_question(message: Message, state: FSMContext):
             await ask_final_questions(message, state, 0)
             return
 
-    elif stage == "final" and index < len(FINAL_QUESTIONS):
-        q_text = FINAL_QUESTIONS[index]
-        callback_prefix = "final"
+    # Третий этап - финальные вопросы
+    elif stage == "final":
+        if index < len(FINAL_QUESTIONS):
+            q_text = FINAL_QUESTIONS[index]
+            callback_prefix = "final"
+        else:
+            await finish_diagnostics(message, state)
+            return
 
-    if not q_text:
+    if q_text is None:
+        logger.error(f"q_text не определен: stage={stage}, index={index}")
         await finish_diagnostics(message, state)
         return
 
     text = f"Вопрос {index + 1}:\n\n{q_text}"
 
-    # Клавиатура для финального вопроса с оценкой
-    if stage == "final" and index == 0:
+    # Создаем клавиатуру в зависимости от типа вопроса
+    if stage == "final" and index == 0:  # Первый финальный вопрос (оценка от 1 до 10)
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=str(i), callback_data=f"final_{i}_0") for i in range(1, 6)],
-            [InlineKeyboardButton(text=str(i), callback_data=f"final_{i}_0") for i in range(6, 11)]
+            [InlineKeyboardButton(text="1", callback_data="final_1_0"),
+             InlineKeyboardButton(text="2", callback_data="final_2_0"),
+             InlineKeyboardButton(text="3", callback_data="final_3_0"),
+             InlineKeyboardButton(text="4", callback_data="final_4_0"),
+             InlineKeyboardButton(text="5", callback_data="final_5_0")],
+            [InlineKeyboardButton(text="6", callback_data="final_6_0"),
+             InlineKeyboardButton(text="7", callback_data="final_7_0"),
+             InlineKeyboardButton(text="8", callback_data="final_8_0"),
+             InlineKeyboardButton(text="9", callback_data="final_9_0"),
+             InlineKeyboardButton(text="10", callback_data="final_10_0")]
+        ])
+    elif stage == "final" and index == 1:  # Второй финальный вопрос (с вариантами)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=opt, callback_data=f"final_option1_{i}")] 
+            for i, opt in enumerate(FINAL_OPTIONS[0])
+        ])
+    elif stage == "final" and index == 2:  # Третий финальный вопрос (с вариантами)
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text=opt, callback_data=f"final_option2_{i}")] 
+            for i, opt in enumerate(FINAL_OPTIONS[1])
         ])
     else:
+        # Стандартная клавиатура для основных вопросов
         keyboard = InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="1 — Совсем не про меня", callback_data=f"{callback_prefix}_1_{index}")],
             [InlineKeyboardButton(text="2 — Скорее не про меня", callback_data=f"{callback_prefix}_2_{index}")],
@@ -625,135 +657,250 @@ async def ask_question(message: Message, state: FSMContext):
 
     await message.answer(text, reply_markup=keyboard)
 
-@dp.callback_query(lambda c: c.data.startswith(("first_", "branch_", "final_")))
+
+@dp.callback_query(lambda c: c.data.startswith(("first_", "branch_", "final_", "final_option1_", "final_option2_")))
 async def process_answer(callback: CallbackQuery, state: FSMContext):
     """Обрабатывает ответ пользователя"""
-    parts = callback.data.split("_")
-    prefix = parts[0]
-    score = int(parts[1])
-    index = int(parts[2])
+    data = callback.data
+    
+    # Обработка разных типов ответов
+    if data.startswith("final_option1_"):
+        option_index = int(data.split("_")[2])
+        await process_final_option(callback, state, 1, option_index)
+        return
+    elif data.startswith("final_option2_"):
+        option_index = int(data.split("_")[2])
+        await process_final_option(callback, state, 2, option_index)
+        return
+    else:
+        # Стандартная обработка для вопросов с числовой оценкой
+        parts = data.split("_")
+        prefix = parts[0]
+        score = int(parts[1])
+        index = int(parts[2])
 
-    data = await state.get_data()
-    scores = data.get("scores", [0] * len(PROGRAMS))
-    current_stage = data.get("stage", "first")
-    branch = data.get("current_branch", None)
-    branch_questions_asked = data.get("branch_questions_asked", 0)
+        state_data = await state.get_data()
+        scores = state_data.get("scores", [0] * len(PROGRAMS))
+        current_stage = state_data.get("stage", "first")
+        branch = state_data.get("current_branch", None)
+        branch_questions_asked = state_data.get("branch_questions_asked", 0)
 
-    # Обработка первого этапа
-    if prefix == "first" and current_stage == "first" and index < len(FIRST_STAGE_QUESTIONS):
-        first_stage_answers = data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
-        first_stage_answers[index] = score
-        await state.update_data(first_stage_answers=first_stage_answers, question_index=index + 1)
+        logger.info(f"process_answer: prefix={prefix}, score={score}, index={index}, stage={current_stage}")
 
-    # Обработка вопросов по веткам
-    elif prefix == "branch" and current_stage == "branch" and branch:
-        branch_programs = {'A': BRANCH_A, 'B': BRANCH_B, 'C': BRANCH_C, 'D': BRANCH_D}.get(branch, [])
-        if branch_questions_asked < len(branch_programs):
-            prog_index = branch_programs[branch_questions_asked]
-            scores[prog_index] += score
-            await state.update_data(
-                scores=scores,
-                branch_questions_asked=branch_questions_asked + 1
-            )
+        # Обработка первого этапа - сохраняем ответы
+        if prefix == "first" and current_stage == "first":
+            if index < len(FIRST_STAGE_QUESTIONS):
+                first_stage_answers = state_data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
+                first_stage_answers[index] = score
+                await state.update_data(first_stage_answers=first_stage_answers)
+                # Увеличиваем индекс для первого этапа
+                new_index = index + 1
+                await state.update_data(question_index=new_index)
+                logger.info(f"Первый этап: сохранен ответ {score} на вопрос {index}, новый индекс {new_index}")
 
-    # Обработка финальных вопросов
-    elif prefix == "final" and current_stage == "final":
-        final_answers = data.get("final_answers", {})
-        final_answers[f"q{index}"] = score
-        await state.update_data(final_answers=final_answers, question_index=index + 1)
+        # Обработка второго этапа - добавляем баллы к программам
+        elif prefix == "branch" and current_stage == "branch" and branch:
+            # Определяем, к какой программе относится вопрос
+            branch_programs = {
+                'A': BRANCH_A,
+                'B': BRANCH_B,
+                'C': BRANCH_C,
+                'D': BRANCH_D
+            }.get(branch, [])
+            
+            if branch_questions_asked < len(branch_programs):
+                prog_index = branch_programs[branch_questions_asked]
+                scores[prog_index] += score
+                logger.info(f"Ветка {branch}: добавлено {score} баллов к программе {PROGRAMS[prog_index]}")
+                
+                # Увеличиваем счетчик вопросов ветки
+                await state.update_data(
+                    scores=scores,
+                    branch_questions_asked=branch_questions_asked + 1
+                )
+            else:
+                logger.warning(f"Вопросов ветки больше чем программ: {branch_questions_asked} >= {len(branch_programs)}")
 
+        # Обработка финальных вопросов (с числовой оценкой)
+        elif prefix == "final" and current_stage == "final":
+            if index < len(FINAL_QUESTIONS):
+                final_answers = state_data.get("final_answers", {})
+                final_answers[f"q{index}"] = score
+                new_index = index + 1
+                await state.update_data(
+                    final_answers=final_answers,
+                    question_index=new_index
+                )
+                logger.info(f"Финальный вопрос {index}: сохранен ответ {score}, новый индекс {new_index}")
+
+        # Переходим к следующему вопросу
+        await ask_question(callback.message, state)
+        await callback.answer()
+
+
+async def process_final_option(callback: CallbackQuery, state: FSMContext, question_num: int, option_index: int):
+    """Обрабатывает ответ на финальные вопросы с вариантами"""
+    state_data = await state.get_data()
+    current_stage = state_data.get("stage", "final")
+    index = state_data.get("question_index", 0)
+    
+    logger.info(f"process_final_option: question={question_num}, option={option_index}, index={index}")
+    
+    final_answers = state_data.get("final_answers", {})
+    
+    if question_num == 1:
+        final_answers["frequency"] = option_index
+    else:
+        final_answers["sphere"] = option_index
+    
+    new_index = index + 1
+    await state.update_data(
+        final_answers=final_answers,
+        question_index=new_index
+    )
+    
     await ask_question(callback.message, state)
     await callback.answer()
 
+
 async def determine_branch(message: Message, state: FSMContext):
-    """Определяет основную ветку после первых вопросов"""
+    """Определяет основную ветку после первых 10 вопросов"""
     data = await state.get_data()
+    
+    # Получаем ответы первого этапа
     first_stage_answers = data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
+    
+    logger.info(f"determine_branch: first_stage_answers={first_stage_answers}")
+    
+    # Создаем начальные баллы для программ
     scores = [0] * len(PROGRAMS)
     
-    # Распределяем баллы по веткам
-    for i in range(min(4, len(first_stage_answers))):
+    # Вопросы 1-2 → ветка A (индексы 0-1)
+    for i in range(min(2, len(first_stage_answers))):
         for prog_idx in BRANCH_A:
             scores[prog_idx] += first_stage_answers[i] * 2
-    for i in range(4, min(8, len(first_stage_answers))):
+    
+    # Вопросы 3-4 → ветка B (индексы 2-3)
+    for i in range(2, min(4, len(first_stage_answers))):
         for prog_idx in BRANCH_B:
             scores[prog_idx] += first_stage_answers[i] * 2
-    for i in range(8, min(12, len(first_stage_answers))):
+    
+    # Вопросы 5-6 → ветка C (индексы 4-5)
+    for i in range(4, min(6, len(first_stage_answers))):
         for prog_idx in BRANCH_C:
             scores[prog_idx] += first_stage_answers[i] * 2
-    for i in range(12, min(16, len(first_stage_answers))):
+    
+    # Вопросы 7-8 → ветка D (индексы 6-7)
+    for i in range(6, min(8, len(first_stage_answers))):
         for prog_idx in BRANCH_D:
             scores[prog_idx] += first_stage_answers[i] * 2
-    for i in range(16, len(first_stage_answers)):
+    
+    # Вопросы 9-10 распределяем равномерно по всем программам (индексы 8-9)
+    for i in range(8, len(first_stage_answers)):
         for prog_idx in range(len(PROGRAMS)):
             scores[prog_idx] += first_stage_answers[i]
     
+    # Сохраняем scores
     await state.update_data(scores=scores)
+    
+    # Подсчитываем баллы по веткам
     branch_scores = get_branch_scores(scores)
     top_branches = get_top_branches(branch_scores)
     
+    logger.info(f"determine_branch: branch_scores={branch_scores}, top_branches={top_branches}")
+    
     if len(top_branches) == 1:
+        # Явный лидер - идём в его ветку
         await state.update_data(
             current_branch=top_branches[0],
             stage="branch",
             branch_questions_asked=0,
-            question_index=18
+            question_index=10  # Начинаем второй этап после 10 вопросов
         )
+        logger.info(f"Выбрана ветка {top_branches[0]}, начинаем вопросы по ветке")
         await ask_question(message, state)
     else:
+        # Ничья между ветками - задаём вопрос-разрешитель
         branch_pair = "_".join(sorted(top_branches))
         tie_question = BRANCH_TIE_QUESTIONS.get(branch_pair)
         
         if tie_question:
-            await state.update_data(tie_branches=top_branches, stage="branch_tie")
+            await state.update_data(
+                tie_branches=top_branches,
+                stage="branch_tie"
+            )
+            
             keyboard = InlineKeyboardMarkup(inline_keyboard=[
                 [InlineKeyboardButton(text="Вариант 1", callback_data="tie_branch_1")],
                 [InlineKeyboardButton(text="Вариант 2", callback_data="tie_branch_2")]
             ])
-            await message.answer(f"Чтобы точнее понять твою ситуацию:\n\n{tie_question}", reply_markup=keyboard)
+            
+            logger.info(f"Ничья между ветками {top_branches}, задаем вопрос-разрешитель")
+            await message.answer(f"Чтобы точнее понять твою ситуацию, ответь на один вопрос:\n\n{tie_question}", 
+                               reply_markup=keyboard)
         else:
+            # Если нет вопроса для этой пары - выбираем первую ветку
             await state.update_data(
                 current_branch=top_branches[0],
                 stage="branch",
                 branch_questions_asked=0,
-                question_index=18
+                question_index=10
             )
+            logger.info(f"Выбрана ветка {top_branches[0]} (нет вопроса-разрешителя)")
             await ask_question(message, state)
+
 
 @dp.callback_query(lambda c: c.data.startswith("tie_branch_"))
 async def process_branch_tie(callback: CallbackQuery, state: FSMContext):
-    """Обрабатывает ответ на вопрос-разрешитель"""
-    choice = callback.data.split("_")[2]
+    """Обрабатывает ответ на вопрос-разрешитель между ветками"""
+    choice = callback.data.split("_")[2]  # "1" или "2"
+    
     data = await state.get_data()
     tie_branches = data.get("tie_branches", ['A', 'B'])
     
+    # Выбираем ветку в зависимости от ответа
     selected_branch = tie_branches[0] if choice == "1" else tie_branches[1]
+    
     await state.update_data(
         current_branch=selected_branch,
         stage="branch",
         branch_questions_asked=0,
-        question_index=18
+        question_index=10,  # Начинаем второй этап после 10 вопросов
+        tie_branches=None
     )
     
-    await callback.message.edit_text("Спасибо! Продолжим с уточняющими вопросами.")
+    logger.info(f"Tie-breaker: выбрана ветка {selected_branch}")
+    await callback.message.edit_text("Спасибо! Теперь я лучше понимаю твою ситуацию. Продолжим с уточняющими вопросами.")
     await asyncio.sleep(1)
     await ask_question(callback.message, state)
     await callback.answer()
 
+
 async def ask_final_questions(message: Message, state: FSMContext, question_index: int):
-    """Переход к финальным вопросам"""
-    await state.update_data(stage="final", question_index=question_index)
+    """Переходит к финальным вопросам"""
+    logger.info(f"Переход к финальным вопросам, индекс={question_index}")
+    await state.update_data(
+        stage="final",
+        question_index=question_index
+    )
     await ask_question(message, state)
 
+
 async def finish_diagnostics(message: Message, state: FSMContext):
-    """Завершение диагностики и показ результатов"""
+    """Завершает диагностику и показывает результаты"""
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
+    final_answers = data.get("final_answers", {})
 
+    # Сортируем программы по баллам
     program_scores = list(zip(PROGRAMS, scores, range(len(PROGRAMS))))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top3 = program_scores[:3]
 
+    logger.info(f"finish_diagnostics: top3={[(p[0], p[1]) for p in top3]}")
+    logger.info(f"final_answers={final_answers}")
+
+    # Сообщение с результатами
     text_top = f"""✨ <b>Диагностика завершена!</b> ✨
 
 Твои топ-3 программы:
@@ -762,12 +909,16 @@ async def finish_diagnostics(message: Message, state: FSMContext):
 2️⃣ <b>{top3[1][0]}</b> — {top3[1][1]} баллов
 3️⃣ <b>{top3[2][0]}</b> — {top3[2][1]} баллов
 
+Сейчас особенно активно проявляет себя <b>«{top3[0][0]}»</b>.
+
 📌 Сейчас я пришлю подробные описания всех трёх программ."""
 
     await message.answer(text_top, parse_mode="HTML")
 
+    # Отправляем описания программ (здесь нужно вставить ваши описания)
     for i, (prog, score, prog_idx) in enumerate(top3, 1):
-        desc = PROGRAM_DESCRIPTIONS[prog_idx]
+        # Вместо этой заглушки вставьте ваши реальные описания
+        desc = f"Здесь будет подробное описание программы {prog}"
         await message.answer(f"<b>{i}. {prog}</b>\n\n{desc}", parse_mode="HTML")
         await asyncio.sleep(0.8)
 
@@ -793,14 +944,8 @@ async def finish_diagnostics(message: Message, state: FSMContext):
     await message.answer(text_offer, reply_markup=keyboard, parse_mode="HTML")
     await state.clear()
 
-@dp.callback_query(lambda c: c.data == "restart")
-async def restart_callback(callback: CallbackQuery, state: FSMContext):
-    """Перезапуск диагностики"""
-    await state.clear()
-    await start_handler(callback.message, state)
-    await callback.answer()
+# ==================== ОБРАБОТЧИКИ ЗАПИСИ ====================
 
-# ==================== ОБРАБОТЧИКИ ЗАПИСИ И ОПЛАТЫ ====================
 @dp.callback_query(lambda c: c.data == "book_consult")
 async def book_consult_callback(callback: CallbackQuery, state: FSMContext):
     await state.update_data(service_type="consult", service_name="Консультация", service_price=1000, prepaid_only=False)
@@ -821,6 +966,44 @@ async def book_mini_callback(callback: CallbackQuery, state: FSMContext):
     )
     await callback.answer()
 
+@dp.callback_query(lambda c: c.data == "choose_report")
+async def choose_report_callback(callback: CallbackQuery, state: FSMContext):
+    text = """📄 <b>Выбери вариант разбора:</b>
+
+• Топ-1 — 399₽
+• Топ-2 — 599₽
+• Топ-3 — 799₽"""
+
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="📄 Топ-1 — 399₽", callback_data="report_1")],
+        [InlineKeyboardButton(text="📄 Топ-2 — 599₽", callback_data="report_2")],
+        [InlineKeyboardButton(text="📄 Топ-3 — 799₽", callback_data="report_3")],
+        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+    ])
+
+    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data.startswith("report_"))
+async def process_report_choice(callback: CallbackQuery, state: FSMContext):
+    report_type = callback.data.split("_")[1]
+    prices = {"1": 399, "2": 599, "3": 799}
+    descriptions = {"1": "Топ-1", "2": "Топ-2", "3": "Топ-3"}
+    
+    await state.update_data(
+        service_type="report",
+        report_type=report_type,
+        service_price=prices[report_type],
+        service_name=f"Разбор {descriptions[report_type]}"
+    )
+    
+    await state.set_state(Form.waiting_for_email)
+    await callback.message.edit_text(
+        f"✅ Выбрано: {descriptions[report_type]}\n\n💰 {prices[report_type]}₽\n\nУкажи email для отправки файла:",
+        parse_mode="HTML"
+    )
+    await callback.answer()
+
 @dp.message(Form.waiting_for_name)
 async def process_name(message: Message, state: FSMContext):
     name = message.text.strip()
@@ -836,7 +1019,7 @@ async def process_phone(message: Message, state: FSMContext):
     phone = message.text.strip()
     phone_pattern = re.compile(r'^(\+7|8)?[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}$')
     if not phone_pattern.match(phone.replace(' ', '').replace('-', '')):
-        await message.answer("Пожалуйста, введи корректный номер телефона:")
+        await message.answer("Пожалуйста, введи корректный номер телефона (например: +7 999 123-45-67):")
         return
     await state.update_data(client_phone=phone)
     await state.set_state(Form.waiting_for_date)
@@ -859,12 +1042,14 @@ async def process_date(callback: CallbackQuery, callback_data: SimpleCalendarCal
         data = await state.get_data()
         service_type = data.get("service_type")
         
-        time_slots = {
-            "mini": [["11:00", "12:00", "13:00"], ["14:00", "15:00", "16:00"], ["17:00", "18:00"]],
-            "consult": [["11:00", "13:00", "15:00"], ["17:00"]]
-        }.get(service_type, [["11:00", "13:00", "15:00"], ["17:00"]])
+        if service_type == "mini":
+            time_slots = [["11:00", "12:00", "13:00"], ["14:00", "15:00", "16:00"], ["17:00", "18:00"]]
+            time_text = "с шагом 1 час"
+        else:
+            time_slots = [["11:00", "13:00", "15:00"], ["17:00"]]
+            time_text = "с шагом 2 часа"
         
-        text = f"✅ Дата: {date.strftime('%d.%m.%Y')}\n\n🕐 Выбери время:"
+        text = f"✅ Дата: {date.strftime('%d.%m.%Y')}\n\n🕐 Выбери время ({time_text}):"
         time_keyboard = InlineKeyboardMarkup(inline_keyboard=[])
         
         for row in time_slots:
@@ -895,7 +1080,7 @@ async def process_time(callback: CallbackQuery, state: FSMContext):
 🕐 Время: {selected_time} МСК
 🎯 Услуга: {data.get('service_name')}
 
-{'' if data.get('prepaid_only') else '💰 Предоплата: 1000₽'}
+{f'💰 Сумма: 1000₽' if data.get('prepaid_only') else '💰 Предоплата: 1000₽'}
 
 Всё верно?"""
 
@@ -973,42 +1158,11 @@ async def successful_payment_handler(message: Message, state: FSMContext):
     await state.clear()
     await start_handler(message, state)
 
-@dp.callback_query(lambda c: c.data == "choose_report")
-async def choose_report_callback(callback: CallbackQuery, state: FSMContext):
-    text = """📄 <b>Выбери вариант разбора:</b>
-
-• Топ-1 — 399₽
-• Топ-2 — 599₽
-• Топ-3 — 799₽"""
-
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📄 Топ-1 — 399₽", callback_data="report_1")],
-        [InlineKeyboardButton(text="📄 Топ-2 — 599₽", callback_data="report_2")],
-        [InlineKeyboardButton(text="📄 Топ-3 — 799₽", callback_data="report_3")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
-    ])
-
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data.startswith("report_"))
-async def process_report_choice(callback: CallbackQuery, state: FSMContext):
-    report_type = callback.data.split("_")[1]
-    prices = {"1": 399, "2": 599, "3": 799}
-    descriptions = {"1": "Топ-1", "2": "Топ-2", "3": "Топ-3"}
-    
-    await state.update_data(
-        service_type="report",
-        report_type=report_type,
-        service_price=prices[report_type],
-        service_name=f"Разбор {descriptions[report_type]}"
-    )
-    
-    await state.set_state(Form.waiting_for_email)
-    await callback.message.edit_text(
-        f"✅ Выбрано: {descriptions[report_type]}\n\n💰 {prices[report_type]}₽\n\nУкажи email для отправки файла:",
-        parse_mode="HTML"
-    )
+@dp.callback_query(lambda c: c.data == "restart")
+async def restart_callback(callback: CallbackQuery, state: FSMContext):
+    """Перезапуск диагностики"""
+    await state.clear()
+    await start_handler(callback.message, state)
     await callback.answer()
 
 # ==================== WEBHOOK ====================
