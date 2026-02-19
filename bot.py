@@ -472,7 +472,7 @@ async def about_method_callback(callback: CallbackQuery):
 
 Готов(а) начать? ❤️"""
 
-   keyboard = InlineKeyboardMarkup(inline_keyboard=[
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="▶️ Начать диагностику", callback_data="start_diagnostics")],
         [InlineKeyboardButton(text="📄 Условия и документы", callback_data="show_legal")],
         [InlineKeyboardButton(text="◀️ В главное меню", callback_data="back_to_main")]
