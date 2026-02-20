@@ -445,12 +445,14 @@ async def start_handler(message: Message, state: FSMContext):
 
 Хочешь узнать себя глубже? 👀"""
 
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Начать диагностику", callback_data="start_diagnostics")]
+   keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="▶️ Начать диагностику", callback_data="start_diagnostics")],
+        [InlineKeyboardButton(text="📚 О методе СОВ", callback_data="about_method")],
+        [InlineKeyboardButton(text="📄 Условия и документы", callback_data="show_legal")]
     ])
 
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-    await state.set_state(Form.consent)
+    await state.clear()  # Очищаем состояние при старте
     
 @dp.callback_query(lambda c: c.data == "about_method")
 async def about_method_callback(callback: CallbackQuery):
