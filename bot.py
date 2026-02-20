@@ -884,8 +884,6 @@ async def finish_diagnostics(message: Message, state: FSMContext):
     await message.answer(text_offer, reply_markup=keyboard, parse_mode="HTML")
     await state.clear()
 
-# ==================== ОБРАБОТЧИКИ ЗАПИСИ ====================
-
 # ==================== ОБРАБОТЧИКИ ЗАПИСИ И ОПЛАТЫ ====================
 @dp.callback_query(lambda c: c.data == "book_consult")
 async def book_consult_callback(callback: CallbackQuery, state: FSMContext):
@@ -1093,7 +1091,7 @@ async def restart_callback(callback: CallbackQuery, state: FSMContext):
     await start_handler(callback.message, state)
     await callback.answer()
 
-==================== WEBHOOK ====================
+# ==================== WEBHOOK ====================
 async def on_startup(bot: Bot):
     webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
     secret = os.getenv("WEBHOOK_SECRET", "secret")
