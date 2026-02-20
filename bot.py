@@ -42,6 +42,15 @@ class Form(StatesGroup):
     branch_tie = State()
     final = State()
     
+    # Возвращаем состояния для записи
+    waiting_for_name = State()
+    waiting_for_phone = State()
+    waiting_for_date = State()
+    waiting_for_time = State()
+    waiting_for_payment = State()
+    waiting_for_report_option = State()
+    waiting_for_email = State()
+    
 # ==================== ДАННЫЕ ====================
 PROGRAMS = [
     "Вечная пустота",
