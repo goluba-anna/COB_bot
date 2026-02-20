@@ -1,8 +1,17 @@
 import asyncio
 import logging
+import random
+import string
+import re
+from datetime import datetime
+
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
+from aiogram.types import (
+    InlineKeyboardMarkup, InlineKeyboardButton,
+    Message, CallbackQuery,
+    LabeledPrice, PreCheckoutQuery, SuccessfulPayment
+)
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -11,6 +20,9 @@ import os
 
 from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
+
+# Импорт календаря (обязательно!)
+from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
 
 load_dotenv()
 
@@ -37,12 +49,13 @@ dp = Dispatcher(storage=storage)
 
 # ==================== СОСТОЯНИЯ FSM ====================
 class Form(StatesGroup):
+    # Диагностика
     consent = State()
     question = State()
     branch_tie = State()
     final = State()
     
-    # Возвращаем состояния для записи
+    # Запись и оплата (все состояния сохранены)
     waiting_for_name = State()
     waiting_for_phone = State()
     waiting_for_date = State()
@@ -388,7 +401,6 @@ PROGRAM_DESCRIPTIONS = [
 ]
 
 # ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
-
 def get_branch_scores(scores):
     return {
         'A': sum(scores[i] for i in BRANCH_A),
@@ -874,42 +886,34 @@ async def finish_diagnostics(message: Message, state: FSMContext):
 
 # ==================== ОБРАБОТЧИКИ ЗАПИСИ ====================
 
+# ==================== ОБРАБОТЧИКИ ЗАПИСИ И ОПЛАТЫ ====================
 @dp.callback_query(lambda c: c.data == "book_consult")
 async def book_consult_callback(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(service_type="consult", service_name="Консультация", service_price=1000, prepaid_only=False)
+    await state.update_data(service_type="consult", service_name="Консультация", service_price=6000, prepaid_only=False)
     await state.set_state(Form.waiting_for_name)
-    await callback.message.edit_text(
-        "💫 <b>Запись на консультацию</b>\n\nНапиши своё имя:",
-        parse_mode="HTML"
-    )
+    await callback.message.edit_text("💫 Запись на консультацию\n\nНапиши своё имя:")
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "book_mini")
 async def book_mini_callback(callback: CallbackQuery, state: FSMContext):
     await state.update_data(service_type="mini", service_name="Мини-разбор", service_price=1000, prepaid_only=True)
     await state.set_state(Form.waiting_for_name)
-    await callback.message.edit_text(
-        "🎯 <b>Запись на мини-разбор</b>\n\nНапиши своё имя:",
-        parse_mode="HTML"
-    )
+    await callback.message.edit_text("🎯 Запись на мини-разбор\n\nНапиши своё имя:")
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data == "choose_report")
 async def choose_report_callback(callback: CallbackQuery, state: FSMContext):
-    text = """📄 <b>Выбери вариант разбора:</b>
-
+    text = """📄 Выбери вариант разбора:
 • Топ-1 — 399₽
 • Топ-2 — 599₽
 • Топ-3 — 799₽"""
-
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📄 Топ-1 — 399₽", callback_data="report_1")],
-        [InlineKeyboardButton(text="📄 Топ-2 — 599₽", callback_data="report_2")],
-        [InlineKeyboardButton(text="📄 Топ-3 — 799₽", callback_data="report_3")],
-        [InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="Топ-1 — 399₽", callback_data="report_1")],
+        [InlineKeyboardButton(text="Топ-2 — 599₽", callback_data="report_2")],
+        [InlineKeyboardButton(text="Топ-3 — 799₽", callback_data="report_3")],
+        [InlineKeyboardButton(text="Назад", callback_data="back_to_main")]
     ])
-
-    await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
+    await callback.message.edit_text(text, reply_markup=keyboard)
     await callback.answer()
 
 @dp.callback_query(lambda c: c.data.startswith("report_"))
@@ -917,18 +921,17 @@ async def process_report_choice(callback: CallbackQuery, state: FSMContext):
     report_type = callback.data.split("_")[1]
     prices = {"1": 399, "2": 599, "3": 799}
     descriptions = {"1": "Топ-1", "2": "Топ-2", "3": "Топ-3"}
-    
+
     await state.update_data(
         service_type="report",
         report_type=report_type,
         service_price=prices[report_type],
         service_name=f"Разбор {descriptions[report_type]}"
     )
-    
+
     await state.set_state(Form.waiting_for_email)
     await callback.message.edit_text(
-        f"✅ Выбрано: {descriptions[report_type]}\n\n💰 {prices[report_type]}₽\n\nУкажи email для отправки файла:",
-        parse_mode="HTML"
+        f"Выбрано: {descriptions[report_type]} — {prices[report_type]}₽\n\nУкажи email для отправки файла:"
     )
     await callback.answer()
 
@@ -936,18 +939,18 @@ async def process_report_choice(callback: CallbackQuery, state: FSMContext):
 async def process_name(message: Message, state: FSMContext):
     name = message.text.strip()
     if len(name) < 2:
-        await message.answer("Имя должно содержать хотя бы 2 символа. Попробуй ещё раз:")
+        await message.answer("Имя слишком короткое. Попробуй ещё раз:")
         return
     await state.update_data(client_name=name)
     await state.set_state(Form.waiting_for_phone)
-    await message.answer("Теперь напиши номер телефона для связи (например: +7 999 123-45-67):")
+    await message.answer("Теперь напиши номер телефона (например: +79991234567):")
 
 @dp.message(Form.waiting_for_phone)
 async def process_phone(message: Message, state: FSMContext):
     phone = message.text.strip()
     phone_pattern = re.compile(r'^(\+7|8)?[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}$')
     if not phone_pattern.match(phone.replace(' ', '').replace('-', '')):
-        await message.answer("Пожалуйста, введи корректный номер телефона (например: +7 999 123-45-67):")
+        await message.answer("Пожалуйста, введи корректный номер телефона:")
         return
     await state.update_data(client_phone=phone)
     await state.set_state(Form.waiting_for_date)
@@ -959,32 +962,29 @@ async def process_date(callback: CallbackQuery, callback_data: SimpleCalendarCal
     selected, date = await calendar.process_selection(callback, callback_data)
     if selected:
         if date.date() < datetime.now().date():
-            await callback.message.answer("❌ Нельзя выбрать дату в прошлом.")
-            await callback.message.answer("📅 Выбери дату:", reply_markup=await SimpleCalendar().start_calendar())
+            await callback.message.answer("Нельзя выбрать дату в прошлом. Попробуй снова:", reply_markup=await SimpleCalendar().start_calendar())
             await callback.answer()
             return
-        
         await state.update_data(consult_date=date.strftime("%d.%m.%Y"))
         await state.set_state(Form.waiting_for_time)
-        
+
         data = await state.get_data()
         service_type = data.get("service_type")
-        
+
         if service_type == "mini":
             time_slots = [["11:00", "12:00", "13:00"], ["14:00", "15:00", "16:00"], ["17:00", "18:00"]]
             time_text = "с шагом 1 час"
         else:
             time_slots = [["11:00", "13:00", "15:00"], ["17:00"]]
             time_text = "с шагом 2 часа"
-        
-        text = f"✅ Дата: {date.strftime('%d.%m.%Y')}\n\n🕐 Выбери время ({time_text}):"
+
+        text = f"Дата: {date.strftime('%d.%m.%Y')}\n\nВыбери время ({time_text}):"
         time_keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-        
         for row in time_slots:
             row_buttons = [InlineKeyboardButton(text=t, callback_data=f"time_{t.replace(':', '')}") for t in row]
             time_keyboard.inline_keyboard.append(row_buttons)
-        
-        time_keyboard.inline_keyboard.append([InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_date")])
+        time_keyboard.inline_keyboard.append([InlineKeyboardButton(text="Назад к дате", callback_data="back_to_date")])
+
         await callback.message.edit_text(text, reply_markup=time_keyboard)
     await callback.answer()
 
@@ -1093,25 +1093,16 @@ async def restart_callback(callback: CallbackQuery, state: FSMContext):
     await start_handler(callback.message, state)
     await callback.answer()
 
-# ==================== WEBHOOK ====================
+==================== WEBHOOK ====================
 async def on_startup(bot: Bot):
-    try:
-        webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
-        secret = os.getenv("WEBHOOK_SECRET", "secret")
-        if not webhook_url:
-            logger.error("Отсутствует WEBHOOK_URL!")
-            return
-        await bot.set_webhook(url=webhook_url, secret_token=secret)
-        logger.info(f"Webhook установлен: {webhook_url}")
-    except Exception as e:
-        logger.error(f"Ошибка установки webhook: {e}")
+    webhook_url = f"{os.getenv('WEBHOOK_URL')}/webhook"
+    secret = os.getenv("WEBHOOK_SECRET", "secret")
+    await bot.set_webhook(url=webhook_url, secret_token=secret)
+    logger.info(f"Webhook установлен: {webhook_url}")
 
 async def on_shutdown(bot: Bot):
-    try:
-        await bot.delete_webhook(drop_pending_updates=True)
-        logger.info("Webhook удалён")
-    except Exception as e:
-        logger.error(f"Ошибка удаления webhook: {e}")
+    await bot.delete_webhook(drop_pending_updates=True)
+    logger.info("Webhook удалён")
 
 async def main():
     dp.startup.register(on_startup)
@@ -1127,7 +1118,7 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
 
-    logger.info("Бот запущен")
+    logger.info("Сервер запущен")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
