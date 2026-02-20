@@ -1,27 +1,14 @@
 import asyncio
 import logging
-import os
-from datetime import datetime, timedelta
-import random
-import string
-import re
-
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton, 
-    Message, CallbackQuery, LabeledPrice, PreCheckoutQuery,
-    SuccessfulPayment
-)
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
 from dotenv import load_dotenv
+import os
 
-# Импорты для календаря
-from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
-
-# Импорты для webhook
 from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
@@ -50,22 +37,12 @@ dp = Dispatcher(storage=storage)
 
 # ==================== СОСТОЯНИЯ FSM ====================
 class Form(StatesGroup):
-    # Состояния для согласия и диагностики
     consent = State()
-    diagnostics = State()
+    question = State()
+    branch_tie = State()
+    final = State()
     
-    # Состояния для записи на консультацию
-    waiting_for_name = State()
-    waiting_for_phone = State()
-    waiting_for_date = State()
-    waiting_for_time = State()
-    waiting_for_payment = State()
-    
-    # Состояния для выбора варианта разбора
-    waiting_for_report_option = State()
-    waiting_for_email = State()
-
-# ==================== ДАННЫЕ ПРОГРАММ ====================
+# ==================== ДАННЫЕ ====================
 PROGRAMS = [
     "Вечная пустота",
     "Меня оставят",
@@ -166,9 +143,19 @@ FINAL_QUESTIONS = [
     "В какой сфере они сейчас проявляются сильнее всего?"
 ]
 
-FINAL_OPTIONS = [
-    ["Постоянно, каждый день", "Несколько раз в неделю", "Время от времени", "Редко"],
-    ["Отношения", "Деньги и карьера", "Самооценка", "Здоровье", "Другое"]
+FINAL_FREQUENCY_OPTIONS = [
+    "Постоянно, каждый день",
+    "Несколько раз в неделю",
+    "Время от времени",
+    "Редко"
+]
+
+FINAL_SPHERE_OPTIONS = [
+    "Отношения",
+    "Деньги и карьера",
+    "Самооценка",
+    "Здоровье",
+    "Другое"
 ]
 
 # ==================== ОПИСАНИЯ ПРОГРАММ ====================
@@ -391,26 +378,34 @@ PROGRAM_DESCRIPTIONS = [
 🔹 Детям это передаётся через нестабильную самооценку и перепады настроения."""
 ]
 
-# ==================== ФУНКЦИИ ДЛЯ РАБОТЫ С ВЕТКАМИ ====================
+# ==================== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ====================
+
 def get_branch_scores(scores):
-    """Подсчитывает баллы по каждой ветке"""
-    branch_a_score = sum(scores[i] for i in BRANCH_A)
-    branch_b_score = sum(scores[i] for i in BRANCH_B)
-    branch_c_score = sum(scores[i] for i in BRANCH_C)
-    branch_d_score = sum(scores[i] for i in BRANCH_D)
-    return {'A': branch_a_score, 'B': branch_b_score, 'C': branch_c_score, 'D': branch_d_score}
+    return {
+        'A': sum(scores[i] for i in BRANCH_A),
+        'B': sum(scores[i] for i in BRANCH_B),
+        'C': sum(scores[i] for i in BRANCH_C),
+        'D': sum(scores[i] for i in BRANCH_D)
+    }
 
 def get_top_branches(branch_scores, threshold=5):
-    """Определяет лидирующие ветки. Если разница ≤ threshold - возвращает две лучшие"""
     sorted_branches = sorted(branch_scores.items(), key=lambda x: x[1], reverse=True)
     if len(sorted_branches) > 1 and sorted_branches[0][1] - sorted_branches[1][1] <= threshold:
         return [sorted_branches[0][0], sorted_branches[1][0]]
     return [sorted_branches[0][0]]
 
-# ==================== ОБРАБОТЧИКИ КОМАНД ====================
+def get_global_question_number(data, stage, index, branch_q_asked):
+    if stage == "first":
+        return index + 1
+    elif stage == "branch":
+        return 10 + branch_q_asked + 1
+    else:
+        return 16 + index + 1
+
+# ==================== ОСНОВНЫЕ ХЕНДЛЕРЫ ====================
+
 @dp.message(CommandStart())
 async def start_handler(message: Message, state: FSMContext):
-    """Главное меню"""
     username = message.from_user.first_name or "друг"
     text = f"""Привет, {username}! ❤️
 
@@ -430,14 +425,12 @@ async def start_handler(message: Message, state: FSMContext):
 Хочешь узнать себя глубже? 👀"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="▶️ Начать диагностику", callback_data="start_diagnostics")],
-        [InlineKeyboardButton(text="📚 О методе СОВ", callback_data="about_method")],
-        [InlineKeyboardButton(text="📄 Условия и документы", callback_data="show_legal")]
+        [InlineKeyboardButton(text="Начать диагностику", callback_data="start_diagnostics")]
     ])
 
     await message.answer(text, reply_markup=keyboard, parse_mode="HTML")
-    await state.clear()
-
+    await state.set_state(Form.consent)
+    
 @dp.callback_query(lambda c: c.data == "about_method")
 async def about_method_callback(callback: CallbackQuery):
     """Информация о методе СОВ"""
@@ -550,117 +543,76 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
 # ==================== ОСНОВНАЯ ЛОГИКА ОПРОСА ====================
 
 async def ask_question(message: Message, state: FSMContext):
-    """Задает следующий вопрос диагностики"""
     data = await state.get_data()
     index = data.get("question_index", 0)
     stage = data.get("stage", "first")
-    branch = data.get("current_branch", None)
-    branch_questions_asked = data.get("branch_questions_asked", 0)
+    branch = data.get("current_branch")
+    branch_q_asked = data.get("branch_questions_asked", 0)
 
-    logger.info(f"ask_question: stage={stage}, index={index}, branch={branch}, branch_questions={branch_questions_asked}")
+    logger.info(f"ask_question: stage={stage}, index={index}, branch={branch}")
 
-    # Завершение первого этапа (после 10 вопросов) - переход к определению ветки
     if stage == "first" and index >= len(FIRST_STAGE_QUESTIONS):
-        logger.info("Первый этап завершен, определяем ветку")
         await determine_branch(message, state)
         return
 
-    # Завершение второго этапа (после 6 вопросов по ветке) - переход к финальным вопросам
-    if stage == "branch" and branch_questions_asked >= 6:
-        logger.info("Второй этап завершен, переходим к финальным вопросам")
-        await ask_final_questions(message, state, 0)
-        return
-
-    # Завершение финальных вопросов (после 3 вопросов)
-    if stage == "final" and index >= 3:
-        logger.info("Финальные вопросы завершены, показываем результаты")
-        await finish_diagnostics(message, state)
-        return
-
-    q_text = None
-    callback_prefix = None
-
-    # Первый этап - общие вопросы
-    if stage == "first":
-        if index < len(FIRST_STAGE_QUESTIONS):
-            q_text = FIRST_STAGE_QUESTIONS[index]
-            callback_prefix = "first"
-            logger.info(f"Первый этап: вопрос {index+1}")
-        else:
-            await determine_branch(message, state)
+    if stage == "branch_tie":
+        tie_branches = data.get("tie_branches", ["A", "B"])
+        key = f"{tie_branches[0]}_{tie_branches[1]}"
+        q_text = BRANCH_TIE_QUESTIONS.get(key) or BRANCH_TIE_QUESTIONS.get(f"{tie_branches[1]}_{tie_branches[0]}")
+        if q_text:
+            keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                [InlineKeyboardButton(text="Вариант 1", callback_data="tie_branch_1"),
+                 InlineKeyboardButton(text="Вариант 2", callback_data="tie_branch_2")]
+            ])
+            await message.answer(f"Чтобы точнее понять:\n\n{q_text}", reply_markup=keyboard)
             return
-        
-    # Второй этап - вопросы по выбранной ветке
-    elif stage == "branch" and branch:
+        else:
+            await state.update_data(current_branch=tie_branches[0], stage="branch", branch_questions_asked=0)
+            await ask_question(message, state)
+            return
+
+    if stage == "branch" and branch:
         questions = {
-            'A': BRANCH_A_QUESTIONS,
-            'B': BRANCH_B_QUESTIONS,
-            'C': BRANCH_C_QUESTIONS,
-            'D': BRANCH_D_QUESTIONS
+            "A": BRANCH_A_QUESTIONS,
+            "B": BRANCH_B_QUESTIONS,
+            "C": BRANCH_C_QUESTIONS,
+            "D": BRANCH_D_QUESTIONS
         }.get(branch, [])
-        
-        if branch_questions_asked < len(questions):
-            q_text = questions[branch_questions_asked]
+
+        if branch_q_asked < len(questions):
+            q_text = questions[branch_q_asked]
             callback_prefix = "branch"
-            logger.info(f"Ветка {branch}: вопрос {branch_questions_asked+1}")
         else:
             await ask_final_questions(message, state, 0)
             return
 
-    # Третий этап - финальные вопросы
-    elif stage == "final":
+    if stage == "final":
         if index < len(FINAL_QUESTIONS):
             q_text = FINAL_QUESTIONS[index]
-            callback_prefix = "final"
-            logger.info(f"Финальный этап: вопрос {index+1}")
+            if index == 0:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [[InlineKeyboardButton(text=str(i), callback_data=f"final_{i}_0")] for i in range(1, 11)]
+                ])
+            elif index == 1:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=opt, callback_data=f"final_freq_{i}")] for i, opt in enumerate(FINAL_FREQUENCY_OPTIONS)
+                ])
+            else:
+                keyboard = InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text=opt, callback_data=f"final_sphere_{i}")] for i, opt in enumerate(FINAL_SPHERE_OPTIONS)
+                ])
         else:
             await finish_diagnostics(message, state)
             return
 
-    if q_text is None:
-        logger.error(f"q_text не определен: stage={stage}, index={index}")
-        await finish_diagnostics(message, state)
-        return
+    text = f"Вопрос {get_global_question_number(data, stage, index, branch_q_asked)}:\n\n{q_text}"
 
-    text = f"Вопрос {self._get_global_question_number(state, stage, index, branch_questions_asked)}:\n\n{q_text}"
-
-    # Создаем клавиатуру в зависимости от типа вопроса
-    if stage == "final" and index == 0:  # Первый финальный вопрос (оценка от 1 до 10)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="1", callback_data="final_1_0"),
-             InlineKeyboardButton(text="2", callback_data="final_2_0"),
-             InlineKeyboardButton(text="3", callback_data="final_3_0"),
-             InlineKeyboardButton(text="4", callback_data="final_4_0"),
-             InlineKeyboardButton(text="5", callback_data="final_5_0")],
-            [InlineKeyboardButton(text="6", callback_data="final_6_0"),
-             InlineKeyboardButton(text="7", callback_data="final_7_0"),
-             InlineKeyboardButton(text="8", callback_data="final_8_0"),
-             InlineKeyboardButton(text="9", callback_data="final_9_0"),
-             InlineKeyboardButton(text="10", callback_data="final_10_0")]
-        ])
-    elif stage == "final" and index == 1:  # Второй финальный вопрос (с вариантами)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=opt, callback_data=f"final_option1_{i}")] 
-            for i, opt in enumerate(FINAL_OPTIONS[0])
-        ])
-    elif stage == "final" and index == 2:  # Третий финальный вопрос (с вариантами)
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text=opt, callback_data=f"final_option2_{i}")] 
-            for i, opt in enumerate(FINAL_OPTIONS[1])
-        ])
-    else:
-        # Стандартная клавиатура для основных вопросов
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="1 — Совсем не про меня", callback_data=f"{callback_prefix}_1_{index}")],
-            [InlineKeyboardButton(text="2 — Скорее не про меня", callback_data=f"{callback_prefix}_2_{index}")],
-            [InlineKeyboardButton(text="3 — Нейтрально", callback_data=f"{callback_prefix}_3_{index}")],
-            [InlineKeyboardButton(text="4 — Скорее про меня", callback_data=f"{callback_prefix}_4_{index}")],
-            [InlineKeyboardButton(text="5 — Точно про меня", callback_data=f"{callback_prefix}_5_{index}")]
-        ])
+    keyboard = keyboard or InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=str(i), callback_data=f"{callback_prefix}_{i}_{index}")] for i in range(1, 6)
+    ])
 
     await message.answer(text, reply_markup=keyboard)
-
-
+    
 async def _get_global_question_number(state_data, stage, index, branch_questions_asked):
     """Вспомогательная функция для отображения номера вопроса"""
     if stage == "first":
@@ -783,91 +735,39 @@ async def process_final_option(callback: CallbackQuery, state: FSMContext, quest
 
 
 async def determine_branch(message: Message, state: FSMContext):
-    """Определяет основную ветку после первых 10 вопросов"""
     data = await state.get_data()
-    
-    # Получаем ответы первого этапа
-    first_stage_answers = data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
-    
-    logger.info(f"determine_branch: first_stage_answers={first_stage_answers}")
-    
-    # Создаем начальные баллы для программ
+    first_answers = data.get("first_stage_answers", [0] * len(FIRST_STAGE_QUESTIONS))
     scores = [0] * len(PROGRAMS)
-    
-    # Вопросы 1-2 → ветка A (индексы 0-1)
-    for i in range(min(2, len(first_stage_answers))):
-        for prog_idx in BRANCH_A:
-            scores[prog_idx] += first_stage_answers[i] * 2
-    
-    # Вопросы 3-4 → ветка B (индексы 2-3)
-    for i in range(2, min(4, len(first_stage_answers))):
-        for prog_idx in BRANCH_B:
-            scores[prog_idx] += first_stage_answers[i] * 2
-    
-    # Вопросы 5-6 → ветка C (индексы 4-5)
-    for i in range(4, min(6, len(first_stage_answers))):
-        for prog_idx in BRANCH_C:
-            scores[prog_idx] += first_stage_answers[i] * 2
-    
-    # Вопросы 7-8 → ветка D (индексы 6-7)
-    for i in range(6, min(8, len(first_stage_answers))):
-        for prog_idx in BRANCH_D:
-            scores[prog_idx] += first_stage_answers[i] * 2
-    
-    # Вопросы 9-10 распределяем равномерно по всем программам (индексы 8-9)
-    for i in range(8, len(first_stage_answers)):
-        for prog_idx in range(len(PROGRAMS)):
-            scores[prog_idx] += first_stage_answers[i]
-    
-    # Сохраняем scores
+
+    # Распределяем баллы по веткам (примерное распределение — подстрой под свои вопросы)
+    for i, score in enumerate(first_answers):
+        if i < 3:  # вопросы 0–2 → A
+            for idx in BRANCH_A: scores[idx] += score
+        elif i < 6:  # 3–5 → B
+            for idx in BRANCH_B: scores[idx] += score
+        elif i < 8:  # 6–7 → C
+            for idx in BRANCH_C: scores[idx] += score
+        else:  # 8–9 → D
+            for idx in BRANCH_D: scores[idx] += score
+
     await state.update_data(scores=scores)
-    
-    # Подсчитываем баллы по веткам
+
     branch_scores = get_branch_scores(scores)
     top_branches = get_top_branches(branch_scores)
-    
-    logger.info(f"determine_branch: branch_scores={branch_scores}, top_branches={top_branches}")
-    
+
     if len(top_branches) == 1:
-        # Явный лидер - идём в его ветку
         await state.update_data(
             current_branch=top_branches[0],
             stage="branch",
-            branch_questions_asked=0,
-            question_index=10  # Фиксируем индекс на 10 для второго этапа
+            branch_questions_asked=0
         )
-        logger.info(f"Выбрана ветка {top_branches[0]}, начинаем вопросы по ветке")
         await ask_question(message, state)
     else:
-        # Ничья между ветками - задаём вопрос-разрешитель
-        branch_pair = "_".join(sorted(top_branches))
-        tie_question = BRANCH_TIE_QUESTIONS.get(branch_pair)
-        
-        if tie_question:
-            await state.update_data(
-                tie_branches=top_branches,
-                stage="branch_tie"
-            )
-            
-            keyboard = InlineKeyboardMarkup(inline_keyboard=[
-                [InlineKeyboardButton(text="Вариант 1", callback_data="tie_branch_1")],
-                [InlineKeyboardButton(text="Вариант 2", callback_data="tie_branch_2")]
-            ])
-            
-            logger.info(f"Ничья между ветками {top_branches}, задаем вопрос-разрешитель")
-            await message.answer(f"Чтобы точнее понять твою ситуацию, ответь на один вопрос:\n\n{tie_question}", 
-                               reply_markup=keyboard)
-        else:
-            # Если нет вопроса для этой пары - выбираем первую ветку
-            await state.update_data(
-                current_branch=top_branches[0],
-                stage="branch",
-                branch_questions_asked=0,
-                question_index=10
-            )
-            logger.info(f"Выбрана ветка {top_branches[0]} (нет вопроса-разрешителя)")
-            await ask_question(message, state)
-
+        await state.update_data(
+            tie_branches=top_branches,
+            stage="branch_tie"
+        )
+        await ask_question(message, state)
 
 @dp.callback_query(lambda c: c.data.startswith("tie_branch_"))
 async def process_branch_tie(callback: CallbackQuery, state: FSMContext):
@@ -1209,11 +1109,7 @@ async def main():
     dp.shutdown.register(on_shutdown)
 
     app = web.Application()
-    webhook_handler = SimpleRequestHandler(
-        dispatcher=dp,
-        bot=bot,
-        secret_token=os.getenv("WEBHOOK_SECRET", "secret")
-    )
+    webhook_handler = SimpleRequestHandler(dp, bot, secret_token=os.getenv("WEBHOOK_SECRET", "secret"))
     webhook_handler.register(app, path="/webhook")
     setup_application(app, dp, bot=bot)
 
@@ -1222,12 +1118,8 @@ async def main():
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
 
-    logger.info("Сервер запущен и ожидает обновлений")
+    logger.info("Бот запущен")
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
-    try:
-        asyncio.run(main())
-    except Exception as e:
-        logger.error(f"Критическая ошибка: {e}")
-        raise
+    asyncio.run(main())
