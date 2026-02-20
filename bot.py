@@ -516,8 +516,8 @@ async def start_diagnostics_callback(callback: CallbackQuery, state: FSMContext)
 
 Перед началом диагностики нужно подтвердить, что ты ознакомился(лась) и согласен(на) с условиями:
 
-✅ Я ознакомился(лась) с <a href="https://drive.google.com/file/d/1hNsbGW4igNVqJXjl3tApcbSXrNQiX27K/view?usp=share_link">публичной офертой</a>
-✅ Я даю согласие на <a href="https://drive.google.com/file/d/1lP5d-MCBvNpxNBV1hZSCRHByWgFz5LEP/view?usp=sharing">обработку персональных данных</a>
+✅ Я ознакомился(лась) с публичной офертой
+✅ Я даю согласие на обработку персональных данных
 ✅ Я согласен(на) получать информационные сообщения
 
 <b>Подтверди своё согласие, чтобы продолжить.</b>"""
