@@ -1,17 +1,11 @@
 import asyncio
 import logging
-import random
-import string
 import re
 from datetime import datetime
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import CommandStart
-from aiogram.types import (
-    InlineKeyboardMarkup, InlineKeyboardButton,
-    Message, CallbackQuery,
-    LabeledPrice, PreCheckoutQuery, SuccessfulPayment
-)
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton, Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.storage.memory import MemoryStorage
@@ -21,49 +15,40 @@ import os
 from aiohttp import web
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
-# Импорт календаря (обязательно!)
+# Импорт календаря
 from aiogram_calendar import SimpleCalendar, SimpleCalendarCallback
 
 load_dotenv()
 
-# ==================== НАСТРОЙКА ЛОГИРОВАНИЯ ====================
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ==================== ID АДМИНИСТРАТОРА ====================
-ADMIN_ID = 217336060  # Ваш ID
+ADMIN_ID = 217336060  # Твой ID
 
-# ==================== ПРОВЕРКА ПЕРЕМЕННЫХ ====================
 BOT_TOKEN = os.getenv("BOT_TOKEN")
 if not BOT_TOKEN:
     raise ValueError("❌ BOT_TOKEN не задан! Добавьте его в Railway.")
 
-PAYMENTS_TOKEN = os.getenv("PAYMENTS_PROVIDER_TOKEN")
-if not PAYMENTS_TOKEN:
-    logger.warning("⚠️ PAYMENTS_PROVIDER_TOKEN не задан. Оплата работать не будет!")
-
-# ==================== ИНИЦИАЛИЗАЦИЯ БОТА ====================
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 
-# ==================== СОСТОЯНИЯ FSM ====================
+# ==================== СОСТОЯНИЯ ====================
 class Form(StatesGroup):
-    # Диагностика
     consent = State()
     question = State()
     branch_tie = State()
     final = State()
     
-    # Запись и оплата (все состояния сохранены)
+    # Запись
     waiting_for_name = State()
     waiting_for_phone = State()
     waiting_for_date = State()
     waiting_for_time = State()
-    waiting_for_payment = State()
-    waiting_for_report_option = State()
-    waiting_for_email = State()
     
+    # Выбор количества описаний
+    waiting_for_desc_count = State()
+
 # ==================== ДАННЫЕ ====================
 PROGRAMS = [
     "Вечная пустота",
@@ -551,7 +536,7 @@ async def confirm_consent(callback: CallbackQuery, state: FSMContext):
         "Теперь начинаем диагностику ❤️\n\n"
         "Я буду задавать вопросы, а ты просто отвечай. Здесь нет правильных или неправильных ответов — "
         "просто первое, что приходит в голову.\n\n"
-        "Всего будет около 20 вопросов."
+        "Всего будет около 20-25 вопросов."
     )
     
     await asyncio.sleep(2)
@@ -825,23 +810,25 @@ async def ask_final_questions(message: Message, state: FSMContext, question_inde
     await ask_question(message, state)
 
 
+# ==================== ЗАВЕРШЕНИЕ ДИАГНОСТИКИ ====================
 async def finish_diagnostics(message: Message, state: FSMContext):
-    """Завершает диагностику и показывает результаты"""
     data = await state.get_data()
     scores = data.get("scores", [0] * len(PROGRAMS))
-    final_answers = data.get("final_answers", {})
-
-    # Сортируем программы по баллам
-    program_scores = list(zip(PROGRAMS, scores, range(len(PROGRAMS))))
+    
+    # Сортируем топ-3
+    program_scores = list(zip(PROGRAMS, scores))
     program_scores.sort(key=lambda x: x[1], reverse=True)
     top3 = program_scores[:3]
 
-    logger.info(f"finish_diagnostics: top3={[(p[0], p[1]) for p in top3]}")
-    logger.info(f"final_answers={final_answers}")
+    # Краткие описания (первое предложение из полного текста)
+    short_desc = []
+    for prog, score in top3:
+        full = PROGRAM_DESCRIPTIONS[PROGRAMS.index(prog)]
+        short = full.split('\n')[0].strip()  # первое предложение
+        short_desc.append((prog, score, short))
 
-    # Сообщение с результатами
-    text_top = f"""✨ <b>Диагностика завершена!</b> ✨
-
+    # Сообщение 1: Диагностика завершена + топ-3 названия
+    msg1 = f"""✨ Диагностика завершена! ✨
 Твои топ-3 программы:
 
 1️⃣ <b>{top3[0][0]}</b> — {top3[0][1]} баллов
@@ -850,244 +837,139 @@ async def finish_diagnostics(message: Message, state: FSMContext):
 
 Сейчас особенно активно проявляет себя <b>«{top3[0][0]}»</b>.
 
-📌 Сейчас я пришлю подробные описания всех трёх программ."""
+📌 Сейчас я пришлю, как программы проигрываются в твое жизни и влияют на твои решения и выборы."""
 
-    await message.answer(text_top, parse_mode="HTML")
+    await message.answer(msg1, parse_mode="HTML")
+    await asyncio.sleep(2)  # пауза для чтения
 
-    # Отправляем описания программ (здесь нужно вставить ваши описания)
-    for i, (prog, score, prog_idx) in enumerate(top3, 1):
-        # Вместо этой заглушки вставьте ваши реальные описания
-        desc = f"Здесь будет подробное описание программы {prog}"
-        await message.answer(f"<b>{i}. {prog}</b>\n\n{desc}", parse_mode="HTML")
-        await asyncio.sleep(0.8)
+    # Сообщение 2: Описание первой программы
+    msg2 = f"""<b>{short_desc[0][0]}</b> — {short_desc[0][1]} баллов
 
-    text_offer = """Ты узнал(а) себя в этих описаниях?
+{short_desc[0][2]}
 
-<b>Если хочешь пойти глубже:</b>
+Эта программа **сейчас сильнее всего оказывает влияние** на твою жизнь."""
 
-📄 <b>Полный разбор в файле</b>:
-   • Топ-1 программа — 399₽
-   • Топ-2 программы — 599₽  
-   • Топ-3 программы — 799₽
+    await message.answer(msg2, parse_mode="HTML")
+    await asyncio.sleep(2)
 
-🎯 <b>Мини-разбор (30–40 минут) — 1000₽</b>
-💫 <b>Консультация (60–90 минут) — предоплата 1000₽</b>"""
+    # Сообщение 3: Описание второй программы
+    msg3 = f"""<b>{short_desc[1][0]}</b> — {short_desc[1][1]} баллов
+
+{short_desc[1][2]}
+
+Эта программа **дополняет первую и усиливает её** влияние."""
+
+    await message.answer(msg3, parse_mode="HTML")
+    await asyncio.sleep(2)
+
+    # Сообщение 4: Описание третьей программы
+    msg4 = f"""<b>{short_desc[2][0]}</b> — {short_desc[2][1]} баллов
+
+{short_desc[2][2]}
+
+Эта программа **активируется во время стресса или при сильном триггере** и может резко усиливать всё остальное."""
+
+    await message.answer(msg4, parse_mode="HTML")
+    await asyncio.sleep(2)
+
+    # Сообщение 5: 20% + предложение помощи + кнопки
+  msg5 = """То, что ты увидел(а) выше — это примерно **20%** от того, что на самом деле внутри сидит и управляет твоей жизнью.
+
+Если хочешь увидеть полную картину и понять, как ослабить эти программы, вот что ты можешь получить:
+
+<b>Полные описания программ</b> (текстовый файл):
+• 1 программа — 399 ₽  
+• 2 программы — 599 ₽  
+• 3 программы — 799 ₽  
+
+Что внутри:
+- как именно эта программа проявляется в твоей жизни
+- в каких ситуациях она включается сильнее всего
+- как она влияет на отношения / деньги / самооценку / здоровье / детей (какие установки передаешь)
+- первые шаги, чтобы ослабить её влияние
+
+<b>Мини-разбор (30–40 минут онлайн)</b> — 1000 ₽
+Что получишь:
+- разбор конкретной твоей ситуации
+- откуда она взялись и почему именно у тебя
+- рекомендации как здест и сейчас облегчить ситуацию и на что обратить внимание
+После: легче дышится, появляется ощущение «я вижу, что происходит»
+
+<b>Полная консультация (60–90 минут)</b> — 6000 ₽ вместо 8000 ₽ (для тех, кто прошел диагностику)
+Что получишь:
+- глубокий разбор всех ключевых программ и ситуаций в жизни, к которым они привели
+- корневые причины, уберем то, что активирует эти программы и влияет на ситуации
+- план на 1–2 месяца 
+- техники под тебя
+После: ощущение «я дома в себе», внутренняя опора, уходит лишний шум в гололве и жизни
+
+Что выбираешь?"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="📄 Получить разбор", callback_data="choose_report")],
-        [InlineKeyboardButton(text="🎯 Мини-разбор", callback_data="book_mini")],
-        [InlineKeyboardButton(text="💫 Консультация", callback_data="book_consult")],
-        [InlineKeyboardButton(text="🔄 Пройти ещё раз", callback_data="restart")]
+        [InlineKeyboardButton(text="Получить полные описания (1–3)", callback_data="get_descriptions")],
+        [InlineKeyboardButton(text="Мини-разбор — 1000 ₽", callback_data="book_mini")],
+        [InlineKeyboardButton(text="Консультация — 6000 ₽", callback_data="book_consult")],
+        [InlineKeyboardButton(text="Пройти заново", callback_data="restart")]
     ])
 
-    await message.answer(text_offer, reply_markup=keyboard, parse_mode="HTML")
+    await message.answer(msg5, reply_markup=keyboard, parse_mode="HTML")
     await state.clear()
 
-# ==================== ОБРАБОТЧИКИ ЗАПИСИ И ОПЛАТЫ ====================
-@dp.callback_query(lambda c: c.data == "book_consult")
-async def book_consult_callback(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(service_type="consult", service_name="Консультация", service_price=6000, prepaid_only=False)
-    await state.set_state(Form.waiting_for_name)
-    await callback.message.edit_text("💫 Запись на консультацию\n\nНапиши своё имя:")
-    await callback.answer()
+# ==================== ВЫБОР КОЛИЧЕСТВА ОПИСАНИЙ ====================
+@dp.callback_query(lambda c: c.data == "get_descriptions")
+async def show_desc_options(callback: CallbackQuery):
+    text = """Сколько подробных описаний программ хочешь получить?
 
-@dp.callback_query(lambda c: c.data == "book_mini")
-async def book_mini_callback(callback: CallbackQuery, state: FSMContext):
-    await state.update_data(service_type="mini", service_name="Мини-разбор", service_price=1000, prepaid_only=True)
-    await state.set_state(Form.waiting_for_name)
-    await callback.message.edit_text("🎯 Запись на мини-разбор\n\nНапиши своё имя:")
-    await callback.answer()
+• 1 описание — 399 ₽  
+• 2 описания — 599 ₽  
+• 3 описания — 799 ₽  
 
-@dp.callback_query(lambda c: c.data == "choose_report")
-async def choose_report_callback(callback: CallbackQuery, state: FSMContext):
-    text = """📄 Выбери вариант разбора:
-• Топ-1 — 399₽
-• Топ-2 — 599₽
-• Топ-3 — 799₽"""
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="Топ-1 — 399₽", callback_data="report_1")],
-        [InlineKeyboardButton(text="Топ-2 — 599₽", callback_data="report_2")],
-        [InlineKeyboardButton(text="Топ-3 — 799₽", callback_data="report_3")],
-        [InlineKeyboardButton(text="Назад", callback_data="back_to_main")]
-    ])
-    await callback.message.edit_text(text, reply_markup=keyboard)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data.startswith("report_"))
-async def process_report_choice(callback: CallbackQuery, state: FSMContext):
-    report_type = callback.data.split("_")[1]
-    prices = {"1": 399, "2": 599, "3": 799}
-    descriptions = {"1": "Топ-1", "2": "Топ-2", "3": "Топ-3"}
-
-    await state.update_data(
-        service_type="report",
-        report_type=report_type,
-        service_price=prices[report_type],
-        service_name=f"Разбор {descriptions[report_type]}"
-    )
-
-    await state.set_state(Form.waiting_for_email)
-    await callback.message.edit_text(
-        f"Выбрано: {descriptions[report_type]} — {prices[report_type]}₽\n\nУкажи email для отправки файла:"
-    )
-    await callback.answer()
-
-@dp.message(Form.waiting_for_name)
-async def process_name(message: Message, state: FSMContext):
-    name = message.text.strip()
-    if len(name) < 2:
-        await message.answer("Имя слишком короткое. Попробуй ещё раз:")
-        return
-    await state.update_data(client_name=name)
-    await state.set_state(Form.waiting_for_phone)
-    await message.answer("Теперь напиши номер телефона (например: +79991234567):")
-
-@dp.message(Form.waiting_for_phone)
-async def process_phone(message: Message, state: FSMContext):
-    phone = message.text.strip()
-    phone_pattern = re.compile(r'^(\+7|8)?[\s\-]?\(?\d{3}\)?[\s\-]?\d{3}[\s\-]?\d{2}[\s\-]?\d{2}$')
-    if not phone_pattern.match(phone.replace(' ', '').replace('-', '')):
-        await message.answer("Пожалуйста, введи корректный номер телефона:")
-        return
-    await state.update_data(client_phone=phone)
-    await state.set_state(Form.waiting_for_date)
-    await message.answer("📅 Выбери удобную дату:", reply_markup=await SimpleCalendar().start_calendar())
-
-@dp.callback_query(SimpleCalendarCallback.filter(), Form.waiting_for_date)
-async def process_date(callback: CallbackQuery, callback_data: SimpleCalendarCallback, state: FSMContext):
-    calendar = SimpleCalendar()
-    selected, date = await calendar.process_selection(callback, callback_data)
-    if selected:
-        if date.date() < datetime.now().date():
-            await callback.message.answer("Нельзя выбрать дату в прошлом. Попробуй снова:", reply_markup=await SimpleCalendar().start_calendar())
-            await callback.answer()
-            return
-        await state.update_data(consult_date=date.strftime("%d.%m.%Y"))
-        await state.set_state(Form.waiting_for_time)
-
-        data = await state.get_data()
-        service_type = data.get("service_type")
-
-        if service_type == "mini":
-            time_slots = [["11:00", "12:00", "13:00"], ["14:00", "15:00", "16:00"], ["17:00", "18:00"]]
-            time_text = "с шагом 1 час"
-        else:
-            time_slots = [["11:00", "13:00", "15:00"], ["17:00"]]
-            time_text = "с шагом 2 часа"
-
-        text = f"Дата: {date.strftime('%d.%m.%Y')}\n\nВыбери время ({time_text}):"
-        time_keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-        for row in time_slots:
-            row_buttons = [InlineKeyboardButton(text=t, callback_data=f"time_{t.replace(':', '')}") for t in row]
-            time_keyboard.inline_keyboard.append(row_buttons)
-        time_keyboard.inline_keyboard.append([InlineKeyboardButton(text="Назад к дате", callback_data="back_to_date")])
-
-        await callback.message.edit_text(text, reply_markup=time_keyboard)
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data == "back_to_date", Form.waiting_for_time)
-async def back_to_date(callback: CallbackQuery, state: FSMContext):
-    await state.set_state(Form.waiting_for_date)
-    await callback.message.edit_text("📅 Выбери дату:", reply_markup=await SimpleCalendar().start_calendar())
-    await callback.answer()
-
-@dp.callback_query(lambda c: c.data.startswith("time_"), Form.waiting_for_time)
-async def process_time(callback: CallbackQuery, state: FSMContext):
-    time_code = callback.data.split("_")[1]
-    selected_time = f"{time_code[:2]}:{time_code[2:]}" if len(time_code) == 4 else f"{time_code[:2]}:00"
-    
-    data = await state.get_data()
-    text = f"""✅ <b>Данные для записи:</b>
-
-👤 Имя: {data.get('client_name')}
-📞 Телефон: {data.get('client_phone')}
-📅 Дата: {data.get('consult_date')}
-🕐 Время: {selected_time} МСК
-🎯 Услуга: {data.get('service_name')}
-
-{f'💰 Сумма: 1000₽' if data.get('prepaid_only') else '💰 Предоплата: 1000₽'}
-
-Всё верно?"""
+(полное объяснение + как ослабить влияние)"""
 
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="✅ Перейти к оплате", callback_data="proceed_to_payment")],
-        [InlineKeyboardButton(text="🔄 Изменить", callback_data="back_to_booking_start")],
-        [InlineKeyboardButton(text="◀️ В меню", callback_data="back_to_main")]
+        [InlineKeyboardButton(text="1 описание — 399 ₽", callback_data="desc_1")],
+        [InlineKeyboardButton(text="2 описания — 599 ₽", callback_data="desc_2")],
+        [InlineKeyboardButton(text="3 описания — 799 ₽", callback_data="desc_3")],
+        [InlineKeyboardButton(text="Отмена", callback_data="cancel_desc")]
     ])
 
-    await state.update_data(consult_time=selected_time)
     await callback.message.edit_text(text, reply_markup=keyboard, parse_mode="HTML")
     await callback.answer()
 
-@dp.callback_query(lambda c: c.data == "back_to_booking_start")
-async def back_to_booking_start(callback: CallbackQuery, state: FSMContext):
-    data = await state.get_data()
-    if data.get("service_type") == "mini":
-        await book_mini_callback(callback, state)
-    else:
-        await book_consult_callback(callback, state)
+@dp.callback_query(lambda c: c.data.startswith("desc_"))
+async def process_desc_count(callback: CallbackQuery):
+    count = int(callback.data.split("_")[1])
+    prices = {1: 399, 2: 599, 3: 799}
+    price = prices[count]
 
-@dp.callback_query(lambda c: c.data == "proceed_to_payment")
-async def proceed_to_payment(callback: CallbackQuery, state: FSMContext):
-    if not PAYMENTS_TOKEN:
-        await callback.message.answer("❌ Оплата временно недоступна.")
-        await callback.answer()
-        return
-    
-    data = await state.get_data()
-    payment_id = ''.join(random.choices(string.ascii_uppercase + string.digits, k=10))
-    await state.update_data(payment_id=payment_id)
-    
-    price = data.get("service_price", 1000)
-    name = data.get("service_name", "Услуга")
-    
-    await bot.send_invoice(
-        chat_id=callback.message.chat.id,
-        title=name,
-        description=f"Запись на {name.lower()}",
-        payload=payment_id,
-        provider_token=PAYMENTS_TOKEN,
-        currency="rub",
-        prices=[LabeledPrice(label=name, amount=price * 100)],
-        start_parameter="booking"
-    )
-    
-    await state.set_state(Form.waiting_for_payment)
-    await callback.answer()
+    # Топ-программы
+    # (можно взять из состояния, если сохранил, или из последнего сообщения — здесь упрощённо)
+    # Предполагаем, что scores есть в глобальном контексте или сохрани их в state
+    # Для примера — заглушка
+    top_programs = "Меня оставят, Внутренний критик, Вечная пустота"  # ← замени на реальный расчёт
 
-@dp.pre_checkout_query()
-async def pre_checkout_handler(pre_checkout_query: PreCheckoutQuery, state: FSMContext):
-    await bot.answer_pre_checkout_query(pre_checkout_query.id, ok=True)
+    admin_text = f"""ЗАПРОС НА ОПИСАНИЯ!
+Пользователь: {callback.from_user.first_name} (@{callback.from_user.username or 'нет ника'})
+ID: {callback.from_user.id}
+Хочет: {count} описание(й)
+Стоимость: {price} ₽
+Программы: {top_programs}"""
 
-@dp.message(lambda message: message.successful_payment is not None)
-async def successful_payment_handler(message: Message, state: FSMContext):
-    payment_info = message.successful_payment
-    data = await state.get_data()
-    
-    client_name = data.get("client_name", "Не указано")
-    service_name = data.get("service_name", "Услуга")
-    amount = payment_info.total_amount / 100
-    
-    await message.answer(f"✅ Оплата прошла! Спасибо, {client_name}! ❤️")
-    
-    admin_text = f"""💰 Новая оплата!
-👤 {client_name}
-🎯 {service_name}
-💵 {amount}₽"""
-    
     try:
         await bot.send_message(ADMIN_ID, admin_text)
-    except:
-        pass
-    
-    await state.clear()
-    await start_handler(message, state)
+        await callback.message.edit_text(
+            f"Заявка на {count} описание(й) за {price} ₽ отправлена!\n"
+            "Я свяжусь с тобой и пришлю именно то, что нужно ❤️"
+        )
+    except Exception as e:
+        logger.error(f"Ошибка: {e}")
+        await callback.message.edit_text("Произошла ошибка. Напиши мне напрямую.")
 
-@dp.callback_query(lambda c: c.data == "restart")
-async def restart_callback(callback: CallbackQuery, state: FSMContext):
-    """Перезапуск диагностики"""
-    await state.clear()
-    await start_handler(callback.message, state)
+    await callback.answer()
+
+@dp.callback_query(lambda c: c.data == "cancel_desc")
+async def cancel_desc(callback: CallbackQuery):
+    await callback.message.edit_text("Выбор отменён. Если передумаешь — пиши /start")
     await callback.answer()
 
 # ==================== WEBHOOK ====================
@@ -1104,17 +986,14 @@ async def on_shutdown(bot: Bot):
 async def main():
     dp.startup.register(on_startup)
     dp.shutdown.register(on_shutdown)
-
     app = web.Application()
     webhook_handler = SimpleRequestHandler(dp, bot, secret_token=os.getenv("WEBHOOK_SECRET", "secret"))
     webhook_handler.register(app, path="/webhook")
     setup_application(app, dp, bot=bot)
-
     runner = web.AppRunner(app)
     await runner.setup()
     site = web.TCPSite(runner, "0.0.0.0", int(os.getenv("PORT", 8080)))
     await site.start()
-
     logger.info("Сервер запущен")
     await asyncio.Event().wait()
 
